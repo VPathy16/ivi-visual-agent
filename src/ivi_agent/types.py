@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass, field
+from typing import Any, Literal
+
+
+ActionKind = Literal["tap", "swipe", "back", "home", "wait", "text", "finish"]
+Outcome = Literal["pass", "fail", "inconclusive"]
+
+
+@dataclass
+class Action:
+    type: ActionKind
+    confidence: float
+    reason: str
+    target: str = ""
+    x: float | None = None
+    y: float | None = None
+    x2: float | None = None
+    y2: float | None = None
+    duration_ms: int = 500
+    seconds: float = 1.0
+    text: str = ""
+    outcome: Outcome | None = None
+    evidence: str = ""
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Action":
+        allowed = {f.name for f in cls.__dataclass_fields__.values()}
+        return cls(**{key: value for key, value in data.items() if key in allowed})
+
+
+@dataclass
+class StepRecord:
+    number: int
+    screenshot: str
+    action: Action
+    ui_dump_available: bool
+    screen_changed: bool | None = None
+    error: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RunResult:
+    goal: str
+    outcome: Outcome
+    reason: str
+    run_directory: str
+    steps: list[StepRecord] = field(default_factory=list)
+    started_at: str = ""
+    finished_at: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+

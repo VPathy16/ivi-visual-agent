@@ -1,0 +1,37 @@
+from __future__ import annotations
+
+from .config import Config
+from .types import Action
+
+
+class PolicyViolation(ValueError):
+    pass
+
+
+def validate_action(action: Action, config: Config) -> None:
+    valid = {"tap", "swipe", "back", "home", "wait", "text", "finish"}
+    if action.type not in valid:
+        raise PolicyViolation(f"Unsupported action type: {action.type}")
+    if not 0.0 <= action.confidence <= 1.0:
+        raise PolicyViolation("Confidence must be between 0 and 1")
+    if action.type != "finish" and action.confidence < config.minimum_action_confidence:
+        raise PolicyViolation(
+            f"Action confidence {action.confidence:.2f} is below "
+            f"{config.minimum_action_confidence:.2f}"
+        )
+    if action.type in {"tap", "swipe"}:
+        coordinates = [action.x, action.y]
+        if action.type == "swipe":
+            coordinates += [action.x2, action.y2]
+        if any(value is None or not 0.0 <= value <= 1.0 for value in coordinates):
+            raise PolicyViolation("Visual action coordinates must be normalized between 0 and 1")
+    if action.type == "text" and not config.allow_text_input:
+        raise PolicyViolation("Text input is disabled by policy")
+    if action.type == "finish" and action.outcome not in {"pass", "fail", "inconclusive"}:
+        raise PolicyViolation("Finish action must contain a valid outcome")
+    if action.type == "tap":
+        assert action.x is not None and action.y is not None
+        for region in config.protected_regions or []:
+            if len(region) == 4 and region[0] <= action.x <= region[2] and region[1] <= action.y <= region[3]:
+                raise PolicyViolation(f"Tap target is inside protected region {region}")
+
