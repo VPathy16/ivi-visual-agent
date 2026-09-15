@@ -174,6 +174,24 @@ class GridGroundingModel(OllamaVisionModel):
         return {"found": True, "cell_number": 68}
 
 
+class InvalidMilestoneModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://unused", "fake")
+
+    def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes | None,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "subgoals": [
+                {"description": "The Settings icon is visible on the home screen"}
+            ]
+        }
+
+
 class PlannerRetryTests(unittest.TestCase):
     def test_retries_description_and_returns_action(self) -> None:
         image = io.BytesIO()
@@ -191,6 +209,10 @@ class PlannerRetryTests(unittest.TestCase):
         self.assertAlmostEqual(x, 0.625)
         self.assertAlmostEqual(y, 11 / 12)
         self.assertEqual(confidence, 0.8)
+
+    def test_invalid_control_visibility_plan_falls_back_to_user_goal(self) -> None:
+        goal = "Open the Display settings screen"
+        self.assertEqual(InvalidMilestoneModel().create_plan(goal), [goal])
 
     def test_rejects_state_change_for_navigation_goal_and_replans(self) -> None:
         image = io.BytesIO()

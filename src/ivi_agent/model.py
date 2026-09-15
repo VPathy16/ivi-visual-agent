@@ -361,6 +361,17 @@ class OllamaVisionModel:
                     if not isinstance(description, str) or not description.strip():
                         raise ValueError("each subgoal needs a description")
                     cleaned = description.strip()
+                    control_visibility = re.search(
+                        r"\b(?:icon|button|field|control|category)\b.{0,100}"
+                        r"\b(?:visible|selected|highlighted|labeled)\b",
+                        cleaned,
+                        re.IGNORECASE,
+                    )
+                    if control_visibility:
+                        raise ValueError(
+                            "a control being visible or selected is not a completed "
+                            "screen/result milestone"
+                        )
                     if cleaned not in subgoals:
                         subgoals.append(cleaned)
                 if not subgoals:
@@ -368,7 +379,10 @@ class OllamaVisionModel:
                 return subgoals
             except (ModelError, TypeError, ValueError) as exc:
                 last_error = str(exc)
-        raise ModelError(f"Model failed to create a valid subgoal plan: {last_error}")
+        # The unsplit user goal remains a valid, device-independent plan. This
+        # prevents weak local models from making navigation depend on a malformed
+        # milestone while preserving goal-driven behavior.
+        return [goal.strip()]
 
     def _ground_visual_target(self, image: bytes, target: str) -> tuple[float, float, float]:
         prompt = (

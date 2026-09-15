@@ -18,6 +18,14 @@ class ActionSignatureTests(unittest.TestCase):
             "Settings",
         )
 
+    def test_title_named_in_reach_milestone_completes_it(self) -> None:
+        self.assertEqual(
+            title_satisfies_navigation_goal(
+                "Reach the Settings application main screen", ["Settings"]
+            ),
+            "Settings",
+        )
+
     def test_related_title_does_not_complete_navigation_milestone(self) -> None:
         self.assertIsNone(
             title_satisfies_navigation_goal(

@@ -97,7 +97,19 @@ def title_satisfies_navigation_goal(goal: str, titles: list[str]) -> str | None:
             destination = destination[: -len(suffix)]
             break
     for title in titles:
-        if destination and normalize(title) == destination:
+        normalized_title = normalize(title)
+        if destination and normalized_title == destination:
+            return title
+        goal_has_navigation_state = bool(
+            re.search(
+                r"\b(?:display|launch|navigate|open|reach|show)\b",
+                normalize(goal),
+            )
+        )
+        title_is_named_in_goal = bool(
+            re.search(rf"(?:^| ){re.escape(normalized_title)}(?: |$)", normalize(goal))
+        )
+        if normalized_title and goal_has_navigation_state and title_is_named_in_goal:
             return title
     return None
 
