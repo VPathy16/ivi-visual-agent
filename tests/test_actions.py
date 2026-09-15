@@ -156,6 +156,35 @@ def _blank_png() -> bytes:
     return buffer.getvalue()
 
 
+class ActionTypeAliasModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m")
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # Mimics a small model that mislabels the action type as "action".
+        return {
+            "type": "action",
+            "element_id": 1,
+            "target": "Wifi",
+            "confidence": 0.9,
+            "reason": "tap wifi",
+        }
+
+
+class ActionTypeCoercionTests(unittest.TestCase):
+    def test_placeholder_action_type_is_coerced_to_tap(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Wifi" class="android.widget.TextView" clickable="true" '
+            'bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = ActionTypeAliasModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertEqual(action.element_id, 1)
+
+
 class PointGroundingTests(unittest.TestCase):
     def test_point_mode_returns_normalized_coordinates(self) -> None:
         x, y, confidence = PointGroundingModel()._ground_visual_target(_blank_png(), "OK")

@@ -743,6 +743,20 @@ class OllamaVisionModel:
                     [model_image, *(reference_images or [])],
                     ACTION_SCHEMA,
                 )
+                # Ollama JSON mode does not enforce the enum, so small models
+                # sometimes return a placeholder type ("action") or put the real
+                # verb under an "action"/"action_type" key. Recover it before
+                # validation instead of failing the whole step.
+                valid_types = set(ACTION_SCHEMA["properties"]["type"]["enum"])
+                if response.get("type") not in valid_types:
+                    alternate = response.get("action") or response.get("action_type")
+                    if isinstance(alternate, str) and alternate in valid_types:
+                        response["type"] = alternate
+                    elif response.get("element_id") is not None or (
+                        response.get("x") is not None and response.get("y") is not None
+                    ):
+                        # A concrete tap target was named; the verb was just mislabeled.
+                        response["type"] = "tap"
                 safe_compact_types = {
                     "back",
                     "finish",
