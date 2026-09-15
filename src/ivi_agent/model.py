@@ -427,6 +427,14 @@ class OllamaVisionModel:
                 normalize = lambda value: " ".join(
                     re.findall(r"[a-z0-9]+", value.lower())
                 )
+                destination = self._destination_name(exact_goal)
+                feature_settings_goal = (
+                    destination.endswith(" settings") and destination != "settings"
+                )
+                if feature_settings_goal and (
+                    len(subgoals) == 1 or "settings" not in normalize(first)
+                ):
+                    return ["Open the Settings application", exact_goal]
                 if normalize(first) == normalize(exact_goal) or len(subgoals) == 1:
                     return [exact_goal]
                 return [first, exact_goal]
@@ -435,7 +443,11 @@ class OllamaVisionModel:
         # The unsplit user goal remains a valid, device-independent plan. This
         # prevents weak local models from making navigation depend on a malformed
         # milestone while preserving goal-driven behavior.
-        return [goal.strip()]
+        exact_goal = goal.strip()
+        destination = self._destination_name(exact_goal)
+        if destination.endswith(" settings") and destination != "settings":
+            return ["Open the Settings application", exact_goal]
+        return [exact_goal]
 
     def _ground_visual_target(self, image: bytes, target: str) -> tuple[float, float, float]:
         prompt = (
@@ -570,6 +582,26 @@ class OllamaVisionModel:
                     model_image,
                     ACTION_SCHEMA,
                 )
+                safe_compact_types = {
+                    "back",
+                    "finish",
+                    "gesture",
+                    "home",
+                    "input_text",
+                    "wait",
+                }
+                if response.get("type") in safe_compact_types:
+                    response.setdefault("confidence", 0.8)
+                    response.setdefault(
+                        "reason",
+                        f"Constrained {response['type']} action proposed by local model",
+                    )
+                if (
+                    response.get("type") in {"tap", "input_text"}
+                    and not response.get("target")
+                    and isinstance(response.get("candidate_target"), str)
+                ):
+                    response["target"] = response["candidate_target"]
                 if isinstance(response.get("element_id"), str) and response["element_id"].isdigit():
                     response["element_id"] = int(response["element_id"])
                 # A finish proposal is only a request for independent visual
@@ -703,6 +735,33 @@ class OllamaVisionModel:
         prepared = prepare_model_image(image, self.max_image_dimension)
         result = self._chat(VERIFIER_PROMPT, prompt, prepared, VERIFICATION_SCHEMA)
         if result.get("outcome") == "pass":
+            navigation_goal = bool(
+                re.match(
+                    r"^\s*(?:display|go\s+to|launch|navigate\s+to|open|reach|show|view)\b",
+                    goal,
+                    re.IGNORECASE,
+                )
+            )
+            titles = extract_screen_titles(ui_dump)
+            normalized_evidence = " ".join(
+                re.findall(r"[a-z0-9]+", str(result.get("evidence", "")).lower())
+            )
+            evidence_names_title = any(
+                " ".join(re.findall(r"[a-z0-9]+", title.lower()))
+                in normalized_evidence
+                for title in titles
+            )
+            if navigation_goal and ui_dump.strip() and (
+                not titles or not evidence_names_title
+            ):
+                return {
+                    "outcome": "inconclusive",
+                    "confidence": 0.0,
+                    "evidence": (
+                        "Completion claim rejected because it was not anchored to an "
+                        "observed screen title"
+                    ),
+                }
             stop_words = {
                 "a", "an", "and", "app", "application", "connect", "go", "launch",
                 "menu", "navigate", "open", "page", "screen", "settings", "show",

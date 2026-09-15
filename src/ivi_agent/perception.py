@@ -57,7 +57,7 @@ def parse_bounds(value: str) -> tuple[int, int, int, int] | None:
     return left, top, right, bottom
 
 
-def _label(node: ET.Element) -> str:
+def _text_label(node: ET.Element) -> str:
     for key in ("text", "content-desc"):
         value = node.attrib.get(key, "").strip()
         if value:
@@ -69,6 +69,13 @@ def _label(node: ET.Element) -> str:
             value = child.attrib.get(key, "").strip()
             if value:
                 return value
+    return ""
+
+
+def _label(node: ET.Element) -> str:
+    text = _text_label(node)
+    if text:
+        return text
     resource_id = node.attrib.get("resource-id", "")
     return resource_id.rsplit("/", 1)[-1].replace("_", " ").strip()
 
@@ -91,6 +98,9 @@ def extract_ui_elements(ui_dump: str, limit: int = 40) -> list[UIElement]:
     screen_height = max(bounds[3] for _, bounds in parsed_nodes)
     if screen_width <= 0 or screen_height <= 0:
         return []
+    parent_by_node = {
+        child: parent for parent in root.iter("node") for child in parent.findall("node")
+    }
 
     elements: list[UIElement] = []
     seen: set[tuple[tuple[int, int, int, int], str]] = set()
@@ -105,7 +115,16 @@ def extract_ui_elements(ui_dump: str, limit: int = 40) -> list[UIElement]:
         )
         if not interactive:
             continue
-        label = _label(node)
+        label = _text_label(node)
+        if not label:
+            ancestor = parent_by_node.get(node)
+            while ancestor is not None:
+                label = " ".join(ancestor.attrib.get("content-desc", "").split())
+                if label:
+                    break
+                ancestor = parent_by_node.get(ancestor)
+        if not label:
+            label = _label(node)
         scrollable = node.attrib.get("scrollable") == "true"
         if not label and not scrollable:
             continue

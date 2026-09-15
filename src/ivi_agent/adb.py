@@ -56,6 +56,11 @@ class AdbDevice:
         self._run("shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=10)
         time.sleep(0.5)
 
+    def go_home(self) -> None:
+        """Return to Android Home between independent test cases."""
+        self._run("shell", "input", "keyevent", "KEYCODE_HOME", timeout=10)
+        time.sleep(0.5)
+
     def screen_size(self) -> tuple[int, int]:
         output = str(self._run("shell", "wm", "size"))
         matches = re.findall(r"(\d+)x(\d+)", output)

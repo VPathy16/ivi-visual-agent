@@ -203,6 +203,37 @@ ivi-agent --config config.json run \
 Always supply `--serial` when a phone and emulator may both be connected. This prevents
 the test from selecting the wrong Android device.
 
+### 9. Run the repeatable Automotive smoke suite
+
+The bundled suite returns to Home before every case and writes one aggregate HTML/JSON
+result plus the normal evidence for each goal:
+
+```bash
+ivi-agent --config config.json suite \
+  --serial emulator-5554 \
+  --cases examples/automotive-smoke.json
+```
+
+The command exits with status `0` only when every case passes. Results are written under
+`runs/suites/`.
+
+Latest local validation on the Android 15 Automotive ARM64 emulator with
+`qwen3.5:4b`: **8/8 passed in 251.1 seconds**.
+
+| Case | Actions | Result |
+| --- | ---: | --- |
+| Bluetooth settings | 3 | Pass |
+| Network & internet settings | 2 | Pass |
+| Notifications settings | 2 | Pass |
+| Sound settings | 2 | Pass |
+| Display settings | 2 | Pass |
+| Profiles & accounts settings | 2 | Pass |
+| Apps settings | 4 | Pass |
+| System settings | 5 | Pass |
+
+The exact action count can vary with retained emulator state. Every case still starts
+from Home and must verify its own destination screen.
+
 ## Running against a physical Android IVI
 
 Enable Developer options and USB debugging on the bench IVI, authorize the host, and

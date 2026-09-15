@@ -35,6 +35,16 @@ class PerceptionTests(unittest.TestCase):
         </node></hierarchy>"""
         self.assertEqual(extract_ui_elements(source)[0].label, "Settings")
 
+    def test_uses_ancestor_description_for_clickable_icon(self) -> None:
+        source = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node content-desc='Search' bounds='[60,0][100,40]'>
+            <node class='android.widget.FrameLayout' clickable='true'
+                  resource-id='ivi:id/menu_item_icon_container'
+                  bounds='[70,5][95,35]' />
+          </node>
+        </node></hierarchy>"""
+        self.assertEqual(extract_ui_elements(source)[0].label, "Search")
+
     def test_preserves_toggle_state_for_safe_planning(self) -> None:
         source = """<hierarchy><node bounds='[0,0][100,100]'>
           <node text='Bluetooth' class='android.widget.Switch' checkable='true'

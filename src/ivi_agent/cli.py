@@ -13,6 +13,7 @@ from .adb import AdbDevice
 from .agent import GoalAgent
 from .config import Config
 from .model import OllamaVisionModel
+from .suite import load_suite_cases, run_suite
 
 
 def doctor(config: Config) -> int:
@@ -61,6 +62,14 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--output", default="runs", help="Evidence output directory")
     run.add_argument("--dry-run", action="store_true", help="Plan one action without executing it")
 
+    suite = commands.add_parser("suite", help="Run independent goals from Home")
+    suite.add_argument("--cases", required=True, help="Path to suite case JSON")
+    suite.add_argument("--serial", help="ADB device serial")
+    suite.add_argument("--display-id", type=int, help="Android display ID")
+    suite.add_argument(
+        "--output", default="runs/suites", help="Suite evidence output directory"
+    )
+
     mirror = commands.add_parser("scrcpy", help="Open a live scrcpy view")
     mirror.add_argument("--serial", help="ADB device serial")
     mirror.add_argument("--record", help="Optional MP4 recording path")
@@ -84,6 +93,17 @@ def main() -> None:
             enable_ocr=config.enable_ocr,
             max_image_dimension=config.max_image_dimension,
         )
+        if args.command == "suite":
+            summary = run_suite(
+                device,
+                model,
+                config,
+                load_suite_cases(Path(args.cases)),
+                Path(args.output),
+                progress=lambda message: print(message, file=sys.stderr, flush=True),
+            )
+            print(json.dumps(summary, indent=2))
+            raise SystemExit(0 if summary["outcome"] == "pass" else 2)
         agent = GoalAgent(
             device,
             model,

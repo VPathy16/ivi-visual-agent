@@ -160,6 +160,41 @@ class StatefulRetryModel(OllamaVisionModel):
         return self.responses.pop(0)
 
 
+class CompactGestureModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://unused", "fake", enable_ocr=False)
+
+    def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes | None,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"type": "gesture", "direction": "reveal_below", "region": "left"}
+
+
+class CandidateTargetAliasModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://unused", "fake", enable_ocr=False)
+
+    def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes | None,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "type": "input_text",
+            "element_id": 1,
+            "candidate_target": "Search...",
+            "text": "System",
+            "confidence": 0.9,
+            "reason": "Search for System",
+        }
+
+
 class GridGroundingModel(OllamaVisionModel):
     def __init__(self) -> None:
         super().__init__("http://unused", "fake")
@@ -212,6 +247,21 @@ class SpeculativeRouteModel(OllamaVisionModel):
         }
 
 
+class AlwaysPassVerifierModel(OllamaVisionModel):
+    def __init__(self, evidence: str) -> None:
+        super().__init__("http://unused", "fake", enable_ocr=False)
+        self.evidence = evidence
+
+    def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes | None,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"outcome": "pass", "confidence": 0.99, "evidence": self.evidence}
+
+
 class PlannerRetryTests(unittest.TestCase):
     def test_retries_description_and_returns_action(self) -> None:
         image = io.BytesIO()
@@ -219,6 +269,30 @@ class PlannerRetryTests(unittest.TestCase):
         action = FakeModel().plan("Open settings", image.getvalue(), "", [])
         self.assertEqual(action.type, "home")
         self.assertEqual(action.confidence, 0.9)
+
+    def test_accepts_compact_constrained_gesture(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (100, 100), "black").save(image, format="PNG")
+        action = CompactGestureModel().plan(
+            "Open System settings", image.getvalue(), "", []
+        )
+        self.assertEqual(action.type, "gesture")
+        self.assertEqual(action.direction, "reveal_below")
+        self.assertEqual(action.confidence, 0.8)
+
+    def test_accepts_candidate_target_alias_for_validated_input(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (100, 100), "black").save(image, format="PNG")
+        ui_dump = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node text='Search…' class='android.widget.EditText' clickable='true'
+                bounds='[10,10][90,30]' />
+        </node></hierarchy>"""
+        action = CandidateTargetAliasModel().plan(
+            "Open System settings", image.getvalue(), ui_dump, []
+        )
+        self.assertEqual(action.type, "input_text")
+        self.assertEqual(action.target, "Search…")
+        self.assertEqual(action.text, "System")
 
     def test_maps_small_model_grid_alias_to_cell_center(self) -> None:
         image = io.BytesIO()
@@ -232,7 +306,10 @@ class PlannerRetryTests(unittest.TestCase):
 
     def test_invalid_control_visibility_plan_falls_back_to_user_goal(self) -> None:
         goal = "Open the Display settings screen"
-        self.assertEqual(InvalidMilestoneModel().create_plan(goal), [goal])
+        self.assertEqual(
+            InvalidMilestoneModel().create_plan(goal),
+            ["Open the Settings application", goal],
+        )
 
     def test_speculative_middle_route_is_pruned(self) -> None:
         goal = "Open the Notifications settings screen"
@@ -274,6 +351,29 @@ class PlannerRetryTests(unittest.TestCase):
             ),
             "settings",
         )
+
+    def test_rejects_completion_not_anchored_to_screen_title(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (100, 100), "black").save(image, format="PNG")
+        ui_dump = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node content-desc='Apps' clickable='true' bounds='[0,0][20,20]' />
+        </node></hierarchy>"""
+        result = AlwaysPassVerifierModel("The Settings gear icon is selected").verify(
+            "Open the Apps settings screen", image.getvalue(), ui_dump
+        )
+        self.assertEqual(result["outcome"], "inconclusive")
+
+    def test_accepts_completion_anchored_to_matching_visible_title(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (100, 100), "black").save(image, format="PNG")
+        ui_dump = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node text='Apps' resource-id='ivi:id/toolbar_title'
+                bounds='[0,0][50,20]' />
+        </node></hierarchy>"""
+        result = AlwaysPassVerifierModel("The Apps screen title is visible").verify(
+            "Open the Apps settings screen", image.getvalue(), ui_dump
+        )
+        self.assertEqual(result["outcome"], "pass")
 
     def test_rejects_state_change_for_navigation_goal_and_replans(self) -> None:
         image = io.BytesIO()

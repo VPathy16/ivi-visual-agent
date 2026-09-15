@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "name": "Bluetooth settings",
+      "goal": "Open the Bluetooth settings screen"
+    },
+    {
+      "name": "Network settings",
+      "goal": "Open the Network & internet settings screen"
+    },
+    {
+      "name": "Notifications settings",
+      "goal": "Open the Notifications settings screen"
+    },
+    {
+      "name": "Sound settings",
+      "goal": "Open the Sound settings screen"
+    },
+    {
+      "name": "Display settings",
+      "goal": "Open the Display settings screen"
+    },
+    {
+      "name": "Profiles settings",
+      "goal": "Open the Profiles & accounts settings screen"
+    },
+    {
+      "name": "Apps settings",
+      "goal": "Open the Apps settings screen"
+    },
+    {
+      "name": "System settings",
+      "goal": "Open the System settings screen"
+    }
+  ]
+}
