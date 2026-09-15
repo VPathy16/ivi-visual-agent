@@ -130,8 +130,9 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
         #    (verify_each_step): completion is still caught by a finish action and
         #    the free screen-title match above.
         if (
-            getattr(self.config, "verify_each_step", False)
+            getattr(self.config, "verify_each_step", True)
             and self._subgoal_index == len(self._plan) - 1
+            and self._step_count > 1  # nothing can be complete before any action
         ):
             verification = self.model.verify(goal, image, ui_dump)
             if (
