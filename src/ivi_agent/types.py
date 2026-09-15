@@ -74,6 +74,7 @@ class RunResult:
     outcome: Outcome
     reason: str
     run_directory: str
+    knowledge: dict[str, Any] = field(default_factory=dict)
     subgoals: list[SubgoalRecord] = field(default_factory=list)
     steps: list[StepRecord] = field(default_factory=list)
     started_at: str = ""

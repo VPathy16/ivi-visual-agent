@@ -199,12 +199,15 @@ class OllamaVisionModel:
         self,
         system_prompt: str,
         user_prompt: str,
-        image: bytes | None,
+        image: bytes | list[bytes] | None,
         schema: dict[str, Any],
     ) -> dict[str, Any]:
         user_message: dict[str, Any] = {"role": "user", "content": user_prompt}
         if image is not None:
-            user_message["images"] = [base64.b64encode(image).decode("ascii")]
+            images = image if isinstance(image, list) else [image]
+            user_message["images"] = [
+                base64.b64encode(item).decode("ascii") for item in images
+            ]
         payload = {
             "model": self.model,
             "stream": False,
@@ -350,7 +353,17 @@ class OllamaVisionModel:
             "",
             destination,
         )
-        suffixes = ("main screen", "application", "app", "screen", "page", "menu")
+        suffixes = (
+            "main screen",
+            "application",
+            "app",
+            "screen",
+            "page",
+            "menu",
+            "panel",
+            "overlay",
+            "dialog",
+        )
         changed = True
         while changed:
             changed = False
@@ -381,8 +394,46 @@ class OllamaVisionModel:
         reason_tokens = tokens(action.reason)
         return bool(target_tokens & reason_tokens) and bool(goal_tokens & reason_tokens)
 
-    def create_plan(self, goal: str) -> list[str]:
-        prompt = f"USER GOAL: {goal}\nCreate observable, device-independent milestones."
+    @staticmethod
+    def _documented_subgoals(
+        goal: str, knowledge_context: dict[str, Any] | None
+    ) -> list[str] | None:
+        if not knowledge_context:
+            return None
+        generic = {"a", "an", "as", "the", "to", "and", "open", "select", "show"}
+        goal_terms = set(re.findall(r"[a-z0-9]+", goal.lower())) - generic
+        for chunk in knowledge_context.get("retrieved_chunks", []):
+            if chunk.get("kind") != "task" or not isinstance(chunk.get("data"), dict):
+                continue
+            task = chunk["data"]
+            task_goal = str(task.get("goal", task.get("name", "")))
+            task_terms = set(re.findall(r"[a-z0-9]+", task_goal.lower())) - generic
+            if not goal_terms.intersection(task_terms):
+                continue
+            steps = task.get("steps", [])
+            if not isinstance(steps, list) or not steps:
+                continue
+            milestones = [
+                str(step.get("milestone", step.get("expected", ""))).strip()
+                for step in steps[:-1]
+                if isinstance(step, dict)
+                and str(step.get("milestone", step.get("expected", ""))).strip()
+            ]
+            milestones.append(goal.strip())
+            return list(dict.fromkeys(milestones))[:5]
+        return None
+
+    def create_plan(
+        self, goal: str, knowledge_context: dict[str, Any] | None = None
+    ) -> list[str]:
+        documented = self._documented_subgoals(goal, knowledge_context)
+        if documented:
+            return documented
+        prompt = (
+            f"USER GOAL: {goal}\n"
+            "Create observable, device-independent milestones.\n"
+            f"RETRIEVED DOCUMENTATION: {json.dumps(knowledge_context or {})}"
+        )
         last_error = ""
         for attempt in range(2):
             retry = (
@@ -450,19 +501,27 @@ class OllamaVisionModel:
             return ["Open the Settings application", exact_goal]
         return [exact_goal]
 
-    def _ground_visual_target(self, image: bytes, target: str) -> tuple[float, float, float]:
+    def _ground_visual_target(
+        self,
+        image: bytes,
+        target: str,
+        reference_images: list[bytes] | None = None,
+    ) -> tuple[float, float, float]:
         prompt = (
-            f"Find the numbered grid cell containing the visible center of: {target!r}. "
-            "The image has 72 cells: 12 columns by 6 rows, numbered left-to-right "
+            f"In IMAGE 1, find the numbered grid cell containing the visible center of: "
+            f"{target!r}. IMAGE 1 has 72 cells: 12 columns by 6 rows, numbered left-to-right "
             "then top-to-bottom. Return the one cell containing the target's center. "
+            "Any later images are isolated reference icons that may help identify the target; "
+            "never return a location from a reference image. "
             "If it is not clearly visible, set found to false. Return only JSON."
         )
         prepared = prepare_grid_grounding_image(image, self.max_image_dimension)
         response = self._chat(
             "You are a visual grounding component. Locate only the requested target; "
-            "do not choose another action or infer an invisible control.",
+            "do not choose another action or infer an invisible control. Ground only in "
+            "the numbered live screenshot in IMAGE 1.",
             prompt,
-            prepared,
+            [prepared, *(reference_images or [])],
             GROUNDING_SCHEMA,
         )
         if isinstance(response.get("data"), dict):
@@ -498,6 +557,8 @@ class OllamaVisionModel:
         history: list[dict[str, Any]],
         current_subgoal: str | None = None,
         blocked_actions: list[str] | None = None,
+        knowledge_context: dict[str, Any] | None = None,
+        reference_images: list[bytes] | None = None,
     ) -> Action:
         decision_goal = current_subgoal or goal
         elements = extract_ui_elements(ui_dump)
@@ -530,6 +591,7 @@ class OllamaVisionModel:
             "ui_candidates": [element.to_prompt_dict() for element in elements],
             "blocked_actions_on_this_screen": blocked_actions or [],
             "history": history[-10:],
+            "retrieved_documentation": knowledge_context or {},
         }
         has_ui_tree_candidates = any(item.source == "ui_tree" for item in elements)
         use_visual_fallback = not has_ui_tree_candidates or not self.prefer_ui_tree
@@ -558,6 +620,11 @@ class OllamaVisionModel:
             "For input_text return element_id, exact candidate target, and text. "
             "For a gesture also return direction and region. "
             "Return finish with outcome pass only when the current subgoal is visibly complete. "
+            "Retrieved documentation describes semantic routes and proprietary symbols, but "
+            "the live screen must confirm a target before any action. When reference images "
+            "are attached, IMAGE 1 is the live device and later images are isolated icon "
+            "examples only. Follow only the active documented step; never skip to a later "
+            "task target. "
             "Use the key type, never action.\n"
             f"CONTEXT: {json.dumps(context)}"
         )
@@ -580,7 +647,7 @@ class OllamaVisionModel:
                 response = self._chat(
                     PLANNER_PROMPT,
                     prompt + retry_note,
-                    model_image,
+                    [model_image, *(reference_images or [])],
                     ACTION_SCHEMA,
                 )
                 safe_compact_types = {
@@ -630,7 +697,7 @@ class OllamaVisionModel:
                     and action.target
                 ):
                     action.x, action.y, grounding_confidence = self._ground_visual_target(
-                        image, action.target
+                        image, action.target, reference_images
                     )
                     action.confidence = min(action.confidence, grounding_confidence)
                 if (
@@ -644,7 +711,7 @@ class OllamaVisionModel:
                     # unboxed icon. Never execute that ID; re-ground the semantic
                     # target against the independent numbered grid instead.
                     action.x, action.y, grounding_confidence = self._ground_visual_target(
-                        image, action.target
+                        image, action.target, reference_images
                     )
                     action.element_id = None
                     action.confidence = min(action.confidence, grounding_confidence)
@@ -667,7 +734,9 @@ class OllamaVisionModel:
                             # different visible control, discard its incorrect box ID
                             # and independently ground that semantic target.
                             action.x, action.y, grounding_confidence = (
-                                self._ground_visual_target(image, action.target)
+                                self._ground_visual_target(
+                                    image, action.target, reference_images
+                                )
                             )
                             action.element_id = None
                             action.confidence = min(
@@ -686,7 +755,9 @@ class OllamaVisionModel:
                             )
                             if intended_target and goal_terms & reason_terms:
                                 action.x, action.y, grounding_confidence = (
-                                    self._ground_visual_target(image, intended_target)
+                                    self._ground_visual_target(
+                                        image, intended_target, reference_images
+                                    )
                                 )
                                 action.element_id = None
                                 action.target = intended_target.title()
@@ -723,18 +794,33 @@ class OllamaVisionModel:
             f"{invalid}; validation error: {validation_error}"
         )
 
-    def verify(self, goal: str, image: bytes, ui_dump: str = "") -> dict[str, Any]:
+    def verify(
+        self,
+        goal: str,
+        image: bytes,
+        ui_dump: str = "",
+        knowledge_context: dict[str, Any] | None = None,
+        reference_images: list[bytes] | None = None,
+    ) -> dict[str, Any]:
         visible_text = extract_visible_text(ui_dump)
         if not visible_text and self.enable_ocr:
             visible_text = [item.label for item in extract_ocr_elements(image)]
         prompt = (
             f"GOAL: {goal}\n"
             f"ANDROID-REPORTED VISIBLE TEXT: {json.dumps(visible_text)}\n"
+            f"RETRIEVED DOCUMENTATION: {json.dumps(knowledge_context or {})}\n"
             "Return outcome, confidence, and specific visible evidence. Any text named "
-            "as evidence must occur in the supplied visible-text list or visibly in the image."
+            "as evidence must occur in the supplied visible-text list or visibly in IMAGE 1. "
+            "IMAGE 1 is the live device; any later images are documentation references and "
+            "cannot prove completion."
         )
         prepared = prepare_model_image(image, self.max_image_dimension)
-        result = self._chat(VERIFIER_PROMPT, prompt, prepared, VERIFICATION_SCHEMA)
+        result = self._chat(
+            VERIFIER_PROMPT,
+            prompt,
+            [prepared, *(reference_images or [])],
+            VERIFICATION_SCHEMA,
+        )
         if result.get("outcome") == "pass":
             navigation_goal = bool(
                 re.match(
@@ -779,18 +865,20 @@ class OllamaVisionModel:
                     ),
                 }
             stop_words = {
-                "a", "an", "and", "app", "application", "connect", "go", "launch",
-                "menu", "navigate", "open", "page", "screen", "settings", "show",
-                "the", "to",
+                "a", "an", "and", "app", "application", "as", "choose", "connect",
+                "go", "launch", "make", "menu", "navigate", "open", "page",
+                "screen", "select", "set", "settings", "show", "the", "to", "use",
             }
+            aliases = {"bt": "bluetooth", "media": "audio", "sources": "source"}
             goal_terms = {
-                term
+                aliases.get(term, term)
                 for term in re.findall(r"[a-z0-9]+", goal.lower())
                 if term not in stop_words and len(term) > 1
             }
-            observed_terms = set(
-                re.findall(r"[a-z0-9]+", " ".join(visible_text).lower())
-            )
+            observed_terms = {
+                aliases.get(term, term)
+                for term in re.findall(r"[a-z0-9]+", " ".join(visible_text).lower())
+            }
             if goal_terms and not goal_terms.issubset(observed_terms):
                 missing = ", ".join(sorted(goal_terms - observed_terms))
                 return {

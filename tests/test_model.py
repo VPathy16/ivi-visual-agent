@@ -403,6 +403,17 @@ class PlannerRetryTests(unittest.TestCase):
         )
         self.assertEqual(result["outcome"], "pass")
 
+    def test_accepts_bt_alias_for_bluetooth_state_goal(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (100, 100), "black").save(image, format="PNG")
+        ui_dump = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node text='Source: BT Audio' bounds='[0,0][100,30]' />
+        </node></hierarchy>"""
+        result = AlwaysPassVerifierModel("Source: BT Audio is visibly active").verify(
+            "Select Bluetooth as the media source", image.getvalue(), ui_dump
+        )
+        self.assertEqual(result["outcome"], "pass")
+
     def test_rejects_state_change_for_navigation_goal_and_replans(self) -> None:
         image = io.BytesIO()
         Image.new("RGB", (4, 4), "black").save(image, format="PNG")

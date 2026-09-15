@@ -81,7 +81,7 @@ The commands below are the Apple Silicon setup used for the screenshots above.
 ### 1. Install the local tools
 
 ```bash
-brew install android-commandlinetools openjdk scrcpy tesseract ollama
+brew install android-commandlinetools openjdk scrcpy tesseract ollama poppler
 
 export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
 export JAVA_HOME="/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
@@ -369,6 +369,32 @@ coordinates; the agent must locate the documented control on each live screensho
 To recreate the fictional image set included in this repository, run
 `python scripts/generate_sample_manual_images.py` before the build command.
 
+Index the generated PDF once and inspect what the local retriever finds:
+
+```bash
+ivi-agent knowledge index output/pdf/my-vehicle-manual.pdf \
+  --profile my-vehicle
+
+ivi-agent knowledge query \
+  --profile my-vehicle \
+  --goal "Select Bluetooth as the media source"
+```
+
+Run the agent with that manual:
+
+```bash
+ivi-agent --config config.json run \
+  --serial IVI_SERIAL \
+  --knowledge-profile my-vehicle \
+  --goal "Select Bluetooth as the media source"
+```
+
+The PDF is self-contained: the visible pages are readable documentation, and the
+generator embeds the validated JSON and original reference images for exact local
+indexing. At runtime the planner receives only the active semantic step and relevant
+icon crop alongside the live device image. Example screen images are never treated as
+live tappable screens.
+
 ## How the goal-driven loop works
 
 1. Convert the user goal into an optional entry-screen milestone and the exact requested
@@ -404,9 +430,15 @@ The default `config.example.json` uses:
   "enable_ocr": true,
   "max_image_dimension": 768,
   "allow_text_input": true,
-  "protected_regions": []
+  "protected_regions": [],
+  "knowledge_root": "knowledge",
+  "knowledge_profile": null,
+  "knowledge_top_k": 4
 }
 ```
+
+Set `knowledge_profile` in `config.json` to use one vehicle manual by default, or pass
+`--knowledge-profile` for an individual run. Generated knowledge profiles stay local.
 
 Coordinates in `protected_regions` are normalized rectangles in the form
 `[left, top, right, bottom]`. This prevents taps in the upper-right corner:

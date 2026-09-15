@@ -11,5 +11,8 @@
   "enable_ocr": true,
   "max_image_dimension": 768,
   "allow_text_input": true,
-  "protected_regions": []
+  "protected_regions": [],
+  "knowledge_root": "knowledge",
+  "knowledge_profile": null,
+  "knowledge_top_k": 4
 }

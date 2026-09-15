@@ -38,5 +38,9 @@ creating the PDF. Image paths must remain inside this source folder.
 - `tasks`: the semantic steps, expected result after each step, pass evidence and
   forbidden actions.
 
+Give each step a short observable `milestone`, preferably using the exact title visible
+after the action, such as `Open the Audio Hub screen`. This lets the agent advance
+without another model decision when that title appears.
+
 Do not put pixel coordinates in the JSON. The runtime agent must find each documented
 control on the current screenshot.

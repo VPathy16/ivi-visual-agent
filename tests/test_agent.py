@@ -48,6 +48,14 @@ class ActionSignatureTests(unittest.TestCase):
             )
         )
 
+    def test_panel_title_completes_documented_milestone(self) -> None:
+        self.assertEqual(
+            title_satisfies_navigation_goal(
+                "Open the Sources panel", ["Audio Hub", "Sources"]
+            ),
+            "Sources",
+        )
+
     def test_nearby_taps_share_signature(self) -> None:
         first = Action(type="tap", x=0.501, y=0.201, confidence=0.9, reason="first")
         second = Action(type="tap", x=0.502, y=0.202, confidence=0.9, reason="second")

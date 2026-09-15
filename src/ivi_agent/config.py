@@ -21,6 +21,9 @@ class Config:
     max_image_dimension: int = 768
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
+    knowledge_root: str = "knowledge"
+    knowledge_profile: str | None = None
+    knowledge_top_k: int = 4
 
     def __post_init__(self) -> None:
         if self.protected_regions is None:

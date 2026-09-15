@@ -58,14 +58,14 @@ The indexer renders every PDF page and extracts its text. It creates small JSON 
 
 ```json
 {
-  "chunk_id": "task.select_bt_source",
-  "manual_id": "sample-custom-ivi-v1",
-  "page": 5,
+  "id": "task.select_bt_source",
   "kind": "task",
-  "screen": "audio_sources",
+  "name": "Select Bluetooth as the media source",
   "text": "Open Audio, open Sources, then select BT Audio.",
-  "icon_ids": ["audio_hub", "sources", "linkwave"],
-  "page_image": "pages/page-05.png"
+  "data": {
+    "goal": "Select Bluetooth as the media source",
+    "steps": ["..."]
+  }
 }
 ```
 
@@ -106,7 +106,7 @@ The planner treats these instructions as a provisional route. Before every tap i
 4. Capture the resulting screen and confirm the expected transition.
 5. Re-query the manual or recover with Back when the observed screen differs.
 
-## Components to add to this project
+## Implemented components
 
 ### 1. Manual authoring and PDF generator
 
@@ -130,16 +130,18 @@ ivi-agent knowledge index output/pdf/sample-custom-ivi-rag-manual.pdf \
   --profile sample-custom-ivi
 ```
 
-It should create:
+It creates:
 
 ```text
 knowledge/sample-custom-ivi/
   manifest.json
   chunks.jsonl
   pages/
-  icons/
-  index.sqlite
+  assets/
 ```
+
+The current deterministic index uses `manifest.json`, `chunks.jsonl`, rendered page
+images, and exact embedded assets. A database is unnecessary at this scale.
 
 ### 3. Retriever
 
@@ -149,6 +151,8 @@ ivi-agent knowledge query --profile sample-custom-ivi \
 ```
 
 Return the top task, screen, and icon chunks. Keep retrieval deterministic and small.
+The implemented ranker uses local keyword scoring, synonym normalization, and result
+diversity; it requires no embedding model or network service.
 
 ### 4. RAG-aware planner
 
@@ -156,10 +160,16 @@ Add the retrieved instructions and page/icon images to the existing planner inpu
 planner still receives the current screenshot, UI dump, previous actions, and blocked
 actions. Documentation never overrides live evidence.
 
+The implementation narrows the task to one active step before planning. Only isolated
+icon crops are supplied as reference images. Full manual pages and example screens are
+not supplied as tappable visual context, preventing the model from acting on an example.
+
 ### 5. Verifier
 
 Use the success criteria retrieved from the manual. A visible `BT Audio` menu item is not
 enough; the selected state or the active source label must also be visible.
+
+Run reports record the manual profile and retrieved chunk IDs for auditability.
 
 ## Why this is preferable to training
 
@@ -175,11 +185,11 @@ a small icon detector before considering full vision-language model fine-tuning.
 
 ## MVP acceptance test
 
-The first implementation is complete when it can:
+The local implementation now:
 
-1. Index the included sample PDF entirely offline.
-2. Retrieve the correct three semantic actions for the Bluetooth-source goal.
-3. Show the planner the relevant icon examples.
-4. Locate each control from a live screenshot without stored coordinates.
-5. Reject completion while Bluetooth is only an unselected menu option.
-6. Pass only after `BT Audio` is visibly selected.
+1. Indexes the included sample PDF entirely offline.
+2. Retrieves the correct three semantic actions for the Bluetooth-source goal.
+3. Shows the planner the relevant icon examples.
+4. Locates each control from a live screenshot without stored coordinates.
+5. Rejects completion while Bluetooth is only an unselected menu option.
+6. Passes only after `BT Audio` is visibly selected.

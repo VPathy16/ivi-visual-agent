@@ -9,9 +9,11 @@ from typing import Callable
 from .adb import AdbDevice
 from .config import Config
 from .model import OllamaVisionModel
+from .knowledge import KnowledgeBase, prompt_context, reference_images
 from .perception import (
     extract_ocr_screen_titles,
     extract_screen_titles,
+    extract_visible_text,
     hash_distance,
     perceptual_hash,
 )
@@ -102,6 +104,9 @@ def title_satisfies_navigation_goal(goal: str, titles: list[str]) -> str | None:
         " screen",
         " page",
         " menu",
+        " panel",
+        " overlay",
+        " dialog",
     ):
         if destination.endswith(suffix):
             destination = destination[: -len(suffix)]
@@ -122,11 +127,13 @@ class GoalAgent:
         device: AdbDevice,
         model: OllamaVisionModel,
         config: Config,
+        knowledge: KnowledgeBase | None = None,
         progress: Callable[[str], None] | None = None,
     ) -> None:
         self.device = device
         self.model = model
         self.config = config
+        self.knowledge = knowledge
         self.progress = progress or (lambda _message: None)
 
     def run(self, goal: str, output_root: Path, dry_run: bool = False) -> RunResult:
@@ -150,8 +157,28 @@ class GoalAgent:
             self.device.ensure_ready()
             self.device.wake_if_needed()
             size = self.device.screen_size()
+            initial_knowledge = (
+                self.knowledge.query(goal, self.config.knowledge_top_k)
+                if self.knowledge
+                else {}
+            )
+            initial_context = prompt_context(initial_knowledge) if initial_knowledge else {}
+            if initial_knowledge:
+                result.knowledge = {
+                    "profile": initial_knowledge.get("profile"),
+                    "manual_id": initial_knowledge.get("manual_id"),
+                    "retrieved_chunk_ids": [
+                        chunk.get("id") for chunk in initial_knowledge.get("chunks", [])
+                    ],
+                }
+                self.progress(
+                    "Retrieved local manual context: "
+                    + ", ".join(
+                        str(item) for item in result.knowledge["retrieved_chunk_ids"]
+                    )
+                )
             self.progress("Planning observable subgoals")
-            plan = self.model.create_plan(goal)
+            plan = self.model.create_plan(goal, initial_context)
             result.subgoals = [
                 SubgoalRecord(number=index + 1, description=description)
                 for index, description in enumerate(plan)
@@ -180,6 +207,21 @@ class GoalAgent:
                 observed_titles = extract_screen_titles(ui_dump)
                 if not observed_titles and self.model.enable_ocr:
                     observed_titles = extract_ocr_screen_titles(image)
+                visible_text = extract_visible_text(ui_dump)
+                retrieval_query = " ".join(
+                    [goal, current_subgoal.description, *observed_titles, *visible_text[:12]]
+                )
+                step_knowledge = (
+                    self.knowledge.query(retrieval_query, self.config.knowledge_top_k)
+                    if self.knowledge
+                    else {}
+                )
+                step_context = (
+                    prompt_context(step_knowledge, current_subgoal.description)
+                    if step_knowledge
+                    else {}
+                )
+                step_references = reference_images(step_knowledge) if step_knowledge else []
                 final_title = title_satisfies_navigation_goal(goal, observed_titles)
                 if final_title is not None:
                     for prerequisite in result.subgoals[:-1]:
@@ -225,7 +267,13 @@ class GoalAgent:
                     )
                     current_subgoal = result.subgoals[current_subgoal_index]
                 if current_subgoal_index == len(result.subgoals) - 1:
-                    verification = self.model.verify(goal, image, ui_dump)
+                    verification = self.model.verify(
+                        goal,
+                        image,
+                        ui_dump,
+                        knowledge_context=step_context,
+                        reference_images=step_references,
+                    )
                     outcome = str(verification.get("outcome", "inconclusive"))
                     confidence = float(verification.get("confidence", 0.0))
                     evidence = str(
@@ -253,6 +301,8 @@ class GoalAgent:
                     history,
                     current_subgoal=current_subgoal.description,
                     blocked_actions=[repr(item) for item in sorted(blocked_signatures, key=repr)],
+                    knowledge_context=step_context,
+                    reference_images=step_references,
                 )
                 decision_seconds = time.monotonic() - decision_started
                 validate_action(action, self.config, goal)
@@ -281,6 +331,8 @@ class GoalAgent:
                         blocked_actions=[
                             repr(item) for item in sorted(blocked_signatures, key=repr)
                         ],
+                        knowledge_context=step_context,
+                        reference_images=step_references,
                     )
                     decision_seconds += time.monotonic() - decision_started
                     validate_action(replacement, self.config, goal)
@@ -310,7 +362,13 @@ class GoalAgent:
                         if current_subgoal_index == len(result.subgoals) - 1
                         else current_subgoal.description
                     )
-                    verification = self.model.verify(verification_goal, image, ui_dump)
+                    verification = self.model.verify(
+                        verification_goal,
+                        image,
+                        ui_dump,
+                        knowledge_context=step_context,
+                        reference_images=step_references,
+                    )
                     outcome = str(verification.get("outcome", "inconclusive"))
                     confidence = float(verification.get("confidence", 0.0))
                     evidence = str(verification.get("evidence", "No verification evidence"))

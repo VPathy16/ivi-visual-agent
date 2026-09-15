@@ -36,6 +36,18 @@ def write_report(result: RunResult) -> None:
         "</tr>"
         for item in result.subgoals
     )
+    knowledge = ""
+    if result.knowledge:
+        chunk_ids = ", ".join(
+            html.escape(str(item))
+            for item in result.knowledge.get("retrieved_chunk_ids", [])
+        )
+        knowledge = (
+            "<h2>Local manual context</h2>"
+            f"<p><strong>Profile:</strong> {html.escape(str(result.knowledge.get('profile', '')))}"
+            f"<br><strong>Manual:</strong> {html.escape(str(result.knowledge.get('manual_id', '')))}"
+            f"<br><strong>Retrieved:</strong> {chunk_ids}</p>"
+        )
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>IVI Agent Report</title>
 <style>
@@ -49,6 +61,7 @@ img{{width:280px;height:auto}} th{{background:#f4f4f4}}
 <p class="outcome">Outcome: {html.escape(result.outcome.upper())}</p>
 <p>{html.escape(result.reason)}</p>
 <p>{html.escape(result.started_at)} — {html.escape(result.finished_at)}</p>
+{knowledge}
 <h2>Subgoals</h2>
 <table><thead><tr><th>#</th><th>Milestone</th><th>Status</th><th>Evidence</th></tr></thead>
 <tbody>{subgoal_rows}</tbody></table>

@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .adb import AdbDevice
 from .agent import GoalAgent
 from .config import Config
+from .knowledge import KnowledgeBase
 from .model import OllamaVisionModel
 
 
@@ -87,6 +88,7 @@ def run_suite(
     config: Config,
     cases: list[dict[str, str]],
     output_root: Path,
+    knowledge: KnowledgeBase | None = None,
     progress: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     emit = progress or (lambda _message: None)
@@ -109,6 +111,7 @@ def run_suite(
             device,
             model,
             config,
+            knowledge=knowledge,
             progress=lambda message, prefix=case["name"]: emit(f"[{prefix}] {message}"),
         )
         result = agent.run(case["goal"], directory / slug)

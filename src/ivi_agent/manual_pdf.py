@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import json
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -157,6 +158,8 @@ def load_manual_source(source: Path) -> dict[str, Any]:
                 )
             for key in ("instruction", "expected"):
                 _required_text(step, key, step_context)
+            if "milestone" in step:
+                _required_text(step, "milestone", step_context)
 
     data["_source"] = str(source)
     data["_manifest_path"] = str(manifest_path)
@@ -186,6 +189,7 @@ def build_manual_pdf(source: Path, output: Path) -> dict[str, Any]:
             Table,
             TableStyle,
         )
+        from pypdf import PdfReader, PdfWriter
     except ImportError as exc:
         raise ManualValidationError(
             "PDF support is not installed. Run: python -m pip install -e '.[docs]'"
@@ -418,6 +422,7 @@ def build_manual_pdf(source: Path, output: Path) -> dict[str, Any]:
                 [
                     Paragraph(f"<b>{_escape(step['instruction'])}</b>", styles["BodySmall"]),
                     Paragraph(f"Screen: {_escape(step['screen'])} | Target: {_escape(step['target'])}", styles["MutedSmall"]),
+                    Paragraph(f"Milestone: {_escape(step.get('milestone', step['expected']))}", styles["MutedSmall"]),
                     Paragraph(f"Expected: {_escape(step['expected'])}", styles["MutedSmall"]),
                 ],
             ])
@@ -473,12 +478,47 @@ def build_manual_pdf(source: Path, output: Path) -> dict[str, Any]:
 
     if story and isinstance(story[-1], PageBreak):
         story.pop()
-    document = SimpleDocTemplate(
-        str(output), pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm,
-        topMargin=18 * mm, bottomMargin=18 * mm,
-        title=str(manual["title"]), author="IVI Visual Agent",
+    rendered_file = tempfile.NamedTemporaryFile(
+        prefix="ivi-manual-render-", suffix=".pdf", dir=output.parent, delete=False
     )
-    document.build(story, onFirstPage=page_decor, onLaterPages=page_decor)
+    rendered_file.close()
+    packaged_file = tempfile.NamedTemporaryFile(
+        prefix="ivi-manual-package-", suffix=".pdf", dir=output.parent, delete=False
+    )
+    packaged_file.close()
+    rendered_path = Path(rendered_file.name)
+    packaged_path = Path(packaged_file.name)
+    try:
+        document = SimpleDocTemplate(
+            str(rendered_path), pagesize=A4, rightMargin=18 * mm, leftMargin=18 * mm,
+            topMargin=18 * mm, bottomMargin=18 * mm,
+            title=str(manual["title"]), author="IVI Visual Agent",
+        )
+        document.build(story, onFirstPage=page_decor, onLaterPages=page_decor)
+
+        # Keep the PDF as the single distributable knowledge artifact. Human-readable
+        # pages remain visible, while the original manifest and reference images are
+        # embedded for exact, OCR-free local indexing.
+        reader = PdfReader(str(rendered_path))
+        writer = PdfWriter()
+        writer.clone_document_from_reader(reader)
+        writer.add_attachment(
+            "manual.json", Path(data["_manifest_path"]).read_bytes()
+        )
+        attached_images: set[str] = set()
+        for item in [*data["icons"], *data["screens"]]:
+            attachment_name = str(item["image"])
+            if attachment_name in attached_images:
+                continue
+            writer.add_attachment(
+                attachment_name, Path(item["_image_path"]).read_bytes()
+            )
+            attached_images.add(attachment_name)
+        writer.write(str(packaged_path))
+        packaged_path.replace(output)
+    finally:
+        rendered_path.unlink(missing_ok=True)
+        packaged_path.unlink(missing_ok=True)
     return {
         "manual_id": manual["id"],
         "source": data["_source"],

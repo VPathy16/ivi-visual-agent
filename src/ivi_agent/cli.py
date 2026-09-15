@@ -61,6 +61,8 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--display-id", type=int, help="Android display ID")
     run.add_argument("--output", default="runs", help="Evidence output directory")
     run.add_argument("--dry-run", action="store_true", help="Plan one action without executing it")
+    run.add_argument("--knowledge-profile", help="Local manual knowledge profile")
+    run.add_argument("--knowledge-root", help="Directory containing knowledge profiles")
 
     suite = commands.add_parser("suite", help="Run independent goals from Home")
     suite.add_argument("--cases", required=True, help="Path to suite case JSON")
@@ -69,6 +71,8 @@ def parser() -> argparse.ArgumentParser:
     suite.add_argument(
         "--output", default="runs/suites", help="Suite evidence output directory"
     )
+    suite.add_argument("--knowledge-profile", help="Local manual knowledge profile")
+    suite.add_argument("--knowledge-root", help="Directory containing knowledge profiles")
 
     mirror = commands.add_parser("scrcpy", help="Open a live scrcpy view")
     mirror.add_argument("--serial", help="ADB device serial")
@@ -83,6 +87,28 @@ def parser() -> argparse.ArgumentParser:
         "--source", required=True, help="Folder containing manual.json and images/"
     )
     manual_build.add_argument("--output", required=True, help="Generated PDF path")
+
+    knowledge = commands.add_parser("knowledge", help="Manage local PDF knowledge")
+    knowledge_commands = knowledge.add_subparsers(
+        dest="knowledge_command", required=True
+    )
+    knowledge_index = knowledge_commands.add_parser(
+        "index", help="Create a local searchable profile from a PDF"
+    )
+    knowledge_index.add_argument("pdf", help="RAG-friendly PDF manual")
+    knowledge_index.add_argument("--profile", required=True, help="Profile name")
+    knowledge_index.add_argument(
+        "--output", default="knowledge", help="Knowledge profile root"
+    )
+    knowledge_query = knowledge_commands.add_parser(
+        "query", help="Retrieve relevant manual knowledge for a goal"
+    )
+    knowledge_query.add_argument("--profile", required=True, help="Profile name")
+    knowledge_query.add_argument("--goal", required=True, help="Goal or current state")
+    knowledge_query.add_argument(
+        "--root", default="knowledge", help="Knowledge profile root"
+    )
+    knowledge_query.add_argument("--limit", type=int, default=4)
     return root
 
 
@@ -93,6 +119,17 @@ def main() -> None:
             from .manual_pdf import build_manual_pdf
 
             summary = build_manual_pdf(Path(args.source), Path(args.output))
+            print(json.dumps(summary, indent=2))
+            raise SystemExit(0)
+        if args.command == "knowledge":
+            from .knowledge import KnowledgeBase, index_pdf
+
+            if args.knowledge_command == "index":
+                summary = index_pdf(Path(args.pdf), Path(args.output), args.profile)
+            else:
+                summary = KnowledgeBase.open(Path(args.root), args.profile).query(
+                    args.goal, args.limit
+                )
             print(json.dumps(summary, indent=2))
             raise SystemExit(0)
         config = Config.load(args.config)
@@ -109,6 +146,13 @@ def main() -> None:
             enable_ocr=config.enable_ocr,
             max_image_dimension=config.max_image_dimension,
         )
+        from .knowledge import KnowledgeBase
+
+        profile = args.knowledge_profile or config.knowledge_profile
+        knowledge_root = Path(args.knowledge_root or config.knowledge_root)
+        knowledge_base = (
+            KnowledgeBase.open(knowledge_root, profile) if profile else None
+        )
         if args.command == "suite":
             summary = run_suite(
                 device,
@@ -116,6 +160,7 @@ def main() -> None:
                 config,
                 load_suite_cases(Path(args.cases)),
                 Path(args.output),
+                knowledge=knowledge_base,
                 progress=lambda message: print(message, file=sys.stderr, flush=True),
             )
             print(json.dumps(summary, indent=2))
@@ -124,6 +169,7 @@ def main() -> None:
             device,
             model,
             config,
+            knowledge=knowledge_base,
             progress=lambda message: print(message, file=sys.stderr, flush=True),
         )
         result = agent.run(args.goal, Path(args.output), dry_run=args.dry_run)

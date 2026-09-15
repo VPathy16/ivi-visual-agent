@@ -101,18 +101,21 @@
           "screen": "screen.home",
           "target": "home.audio_tile",
           "instruction": "Locate the Audio tile by its label or Audio Hub icon and activate it.",
+          "milestone": "Open the Audio Hub screen",
           "expected": "screen.audio_hub is visible"
         },
         {
           "screen": "screen.audio_hub",
           "target": "audio.sources",
           "instruction": "Locate and activate Sources.",
+          "milestone": "Open the Sources panel",
           "expected": "The audio source list is visible"
         },
         {
           "screen": "panel.audio_sources",
           "target": "sources.bt_audio",
           "instruction": "Locate BT Audio by text, synonym or LinkWave icon and activate it once.",
+          "milestone": "Select Bluetooth as the media source",
           "expected": "BT Audio becomes the selected source"
         }
       ],

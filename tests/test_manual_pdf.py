@@ -5,7 +5,11 @@ from pathlib import Path
 
 from PIL import Image
 
-from ivi_agent.manual_pdf import ManualValidationError, load_manual_source
+from ivi_agent.manual_pdf import (
+    ManualValidationError,
+    build_manual_pdf,
+    load_manual_source,
+)
 
 
 class ManualSourceTests(unittest.TestCase):
@@ -115,6 +119,22 @@ class ManualSourceTests(unittest.TestCase):
         self.write_manifest(root, manifest)
         with self.assertRaisesRegex(ManualValidationError, "unknown control or icon"):
             load_manual_source(root)
+
+    def test_generated_pdf_embeds_manifest_and_reference_images(self) -> None:
+        try:
+            from pypdf import PdfReader
+            import reportlab  # noqa: F401
+        except ImportError:
+            self.skipTest("optional PDF dependencies are not installed")
+        temporary, root, manifest = self.make_source()
+        self.addCleanup(temporary.cleanup)
+        self.write_manifest(root, manifest)
+        output = root / "manual.pdf"
+        build_manual_pdf(root, output)
+        attachments = PdfReader(output).attachments
+        self.assertIn("manual.json", attachments)
+        self.assertIn("images/icon.png", attachments)
+        self.assertIn("images/screen.png", attachments)
 
 
 if __name__ == "__main__":
