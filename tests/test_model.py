@@ -375,6 +375,34 @@ class PlannerRetryTests(unittest.TestCase):
         )
         self.assertEqual(result["outcome"], "pass")
 
+    def test_rejects_visible_destination_row_when_parent_screen_is_active(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (100, 100), "black").save(image, format="PNG")
+        ui_dump = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node content-desc='Connection preferences'
+                resource-id='com.android.settings:id/collapsing_toolbar'
+                bounds='[0,0][100,30]' />
+          <node text='Bluetooth' clickable='true' bounds='[0,30][100,60]' />
+        </node></hierarchy>"""
+        result = AlwaysPassVerifierModel("The Bluetooth option is visible").verify(
+            "Open the Bluetooth settings screen", image.getvalue(), ui_dump
+        )
+        self.assertEqual(result["outcome"], "inconclusive")
+
+    def test_accepts_matching_state_control_as_functional_destination(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (100, 100), "black").save(image, format="PNG")
+        ui_dump = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node text='Connected devices' resource-id='ivi:id/toolbar_title'
+                bounds='[0,0][100,30]' />
+          <node text='Use Bluetooth' class='android.widget.Switch' checkable='true'
+                checked='true' clickable='true' bounds='[0,30][100,60]' />
+        </node></hierarchy>"""
+        result = AlwaysPassVerifierModel("Connected devices shows Use Bluetooth").verify(
+            "Open the Bluetooth settings screen", image.getvalue(), ui_dump
+        )
+        self.assertEqual(result["outcome"], "pass")
+
     def test_rejects_state_change_for_navigation_goal_and_replans(self) -> None:
         image = io.BytesIO()
         Image.new("RGB", (4, 4), "black").save(image, format="PNG")

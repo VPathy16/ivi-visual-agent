@@ -26,6 +26,21 @@ class ActionSignatureTests(unittest.TestCase):
             "Settings",
         )
 
+    def test_generic_settings_title_does_not_complete_specific_settings_goal(self) -> None:
+        self.assertIsNone(
+            title_satisfies_navigation_goal(
+                "Open the Bluetooth settings screen", ["Settings"]
+            )
+        )
+
+    def test_feature_title_completes_specific_settings_goal(self) -> None:
+        self.assertEqual(
+            title_satisfies_navigation_goal(
+                "Open the Bluetooth settings screen", ["Bluetooth"]
+            ),
+            "Bluetooth",
+        )
+
     def test_related_title_does_not_complete_navigation_milestone(self) -> None:
         self.assertIsNone(
             title_satisfies_navigation_goal(

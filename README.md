@@ -1,6 +1,7 @@
 # IVI Visual Agent
 
-A fully local, goal-driven visual agent for Android Automotive and Android IVI testing.
+A fully local, goal-driven visual agent for standard Android phones, Android Automotive,
+and Android IVI testing.
 Give it an outcome such as `Open the Bluetooth settings screen`; it observes the current
 screen, chooses one grounded action, executes it through ADB, and independently verifies
 the result.
@@ -51,6 +52,28 @@ ivi-agent --config config.json run --serial emulator-5554 \
 The three runs above passed with the local `qwen3.5:4b` vision model. The final screen
 was verified from visible titles and page controls, not from the action planner's claim.
 
+### Standard Android phone — passed
+
+The same agent was also tested on a separate Android 15 Pixel 7 ARM64 emulator. The
+clean-state run started at the normal phone Home screen:
+
+![Standard Android phone emulator Home screen](docs/screenshots/android-phone-home.png)
+
+```bash
+adb -s emulator-5556 shell am force-stop com.android.settings
+adb -s emulator-5556 shell input keyevent HOME
+
+ivi-agent --config config.json run --serial emulator-5556 \
+  --goal "Open the Bluetooth settings screen"
+```
+
+It passed in four actions by visually navigating Settings, Connected devices,
+Connection preferences, and Bluetooth. The final title was independently recognized
+as the active destination rather than confusing the earlier Bluetooth menu row for
+completion.
+
+![Standard Android phone Bluetooth settings screen](docs/screenshots/android-phone-bluetooth.png)
+
 ## Complete macOS setup
 
 The commands below are the Apple Silicon setup used for the screenshots above.
@@ -61,7 +84,8 @@ The commands below are the Apple Silicon setup used for the screenshots above.
 brew install android-commandlinetools openjdk scrcpy tesseract ollama
 
 export ANDROID_HOME="/opt/homebrew/share/android-commandlinetools"
-export PATH="/opt/homebrew/opt/openjdk/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
+export JAVA_HOME="/opt/homebrew/opt/openjdk/libexec/openjdk.jdk/Contents/Home"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$PATH"
 ```
 
 To make those paths permanent, add the two `export` lines to `~/.zshrc`, then open a new
@@ -233,6 +257,44 @@ Latest local validation on the Android 15 Automotive ARM64 emulator with
 
 The exact action count can vary with retained emulator state. Every case still starts
 from Home and must verify its own destination screen.
+
+## Running against a standard Android phone emulator
+
+Install a normal Android 15 Google APIs image and create a separate Pixel 7 AVD. This
+does not replace the Automotive AVD:
+
+```bash
+sdkmanager "system-images;android-35;google_apis;arm64-v8a"
+
+echo no | avdmanager create avd \
+  --name ivi_phone_api35 \
+  --package "system-images;android-35;google_apis;arm64-v8a" \
+  --device pixel_7 \
+  --force
+
+emulator @ivi_phone_api35 -no-snapshot -no-audio \
+  -gpu swiftshader_indirect
+```
+
+In another terminal, identify the phone serial with `adb devices -l`. When Automotive
+is already using `emulator-5554`, the phone normally appears as `emulator-5556`.
+
+For a clean navigation trial, close the retained Settings task, return Home, and give
+the agent only the goal:
+
+```bash
+adb -s emulator-5556 shell am force-stop com.android.settings
+adb -s emulator-5556 shell input keyevent HOME
+
+ivi-agent --config config.json run \
+  --serial emulator-5556 \
+  --goal "Open the Bluetooth settings screen"
+```
+
+Latest local validation on the Android 15 Pixel 7 ARM64 emulator with `qwen3.5:4b`:
+**passed in 48.6 seconds using four actions**. The agent navigated through the visible
+UI and verified the final `Bluetooth` page title. No phone-specific route or coordinates
+are stored in the agent.
 
 ## Running against a physical Android IVI
 

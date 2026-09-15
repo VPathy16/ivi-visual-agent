@@ -9,7 +9,12 @@ from typing import Callable
 from .adb import AdbDevice
 from .config import Config
 from .model import OllamaVisionModel
-from .perception import extract_screen_titles, hash_distance, perceptual_hash
+from .perception import (
+    extract_ocr_screen_titles,
+    extract_screen_titles,
+    hash_distance,
+    perceptual_hash,
+)
 from .policy import PolicyViolation, validate_action
 from .report import write_report
 from .types import RunResult, StepRecord, SubgoalRecord
@@ -82,11 +87,16 @@ def title_satisfies_navigation_goal(goal: str, titles: list[str]) -> str | None:
         "navigate to ",
         "launch the ",
         "launch ",
+        "reach the ",
+        "reach ",
     ):
         if destination.startswith(prefix):
             destination = destination[len(prefix) :]
             break
     for suffix in (
+        " application main screen",
+        " app main screen",
+        " main screen",
         " application",
         " app",
         " screen",
@@ -96,20 +106,12 @@ def title_satisfies_navigation_goal(goal: str, titles: list[str]) -> str | None:
         if destination.endswith(suffix):
             destination = destination[: -len(suffix)]
             break
+    destination_terms = destination.split()
+    if len(destination_terms) > 1 and destination_terms[-1] == "settings":
+        destination = " ".join(destination_terms[:-1])
     for title in titles:
         normalized_title = normalize(title)
         if destination and normalized_title == destination:
-            return title
-        goal_has_navigation_state = bool(
-            re.search(
-                r"\b(?:display|launch|navigate|open|reach|show)\b",
-                normalize(goal),
-            )
-        )
-        title_is_named_in_goal = bool(
-            re.search(rf"(?:^| ){re.escape(normalized_title)}(?: |$)", normalize(goal))
-        )
-        if normalized_title and goal_has_navigation_state and title_is_named_in_goal:
             return title
     return None
 
@@ -175,9 +177,29 @@ class GoalAgent:
                     failed_action_memory, screen_hash
                 )
                 current_subgoal = result.subgoals[current_subgoal_index]
+                observed_titles = extract_screen_titles(ui_dump)
+                if not observed_titles and self.model.enable_ocr:
+                    observed_titles = extract_ocr_screen_titles(image)
+                final_title = title_satisfies_navigation_goal(goal, observed_titles)
+                if final_title is not None:
+                    for prerequisite in result.subgoals[:-1]:
+                        if prerequisite.status != "passed":
+                            prerequisite.status = "passed"
+                            prerequisite.evidence = (
+                                "Final destination was already visible; this navigation "
+                                "prerequisite did not need a separate stop"
+                            )
+                    result.subgoals[-1].status = "passed"
+                    result.subgoals[-1].evidence = (
+                        f"Visible screen title exactly matches: {final_title}"
+                    )
+                    result.outcome = "pass"
+                    result.reason = result.subgoals[-1].evidence
+                    self.progress("Final goal visibly reached")
+                    break
                 matched_title = title_satisfies_navigation_goal(
                     current_subgoal.description,
-                    extract_screen_titles(ui_dump),
+                    observed_titles,
                 )
                 if (
                     matched_title is not None

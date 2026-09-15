@@ -1,10 +1,13 @@
 import io
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 
 from ivi_agent.perception import (
+    UIElement,
     extract_screen_titles,
+    extract_ocr_screen_titles,
     extract_ui_elements,
     extract_visible_text,
     hash_distance,
@@ -77,6 +80,36 @@ class PerceptionTests(unittest.TestCase):
                 class='android.widget.TextView' bounds='[10,0][90,20]' />
         </node></hierarchy>"""
         self.assertEqual(extract_screen_titles(source), ["Settings"])
+
+    def test_extracts_standard_android_settings_homepage_title(self) -> None:
+        source = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node text='Settings' resource-id='com.android.settings:id/homepage_title'
+                class='android.widget.TextView' bounds='[10,0][90,20]' />
+          <node text='Connected devices' resource-id='android:id/title'
+                class='android.widget.TextView' bounds='[10,30][90,50]' />
+        </node></hierarchy>"""
+        self.assertEqual(extract_screen_titles(source), ["Settings"])
+
+    def test_extracts_content_description_from_collapsing_toolbar(self) -> None:
+        source = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node content-desc='Connection preferences'
+                resource-id='com.android.settings:id/collapsing_toolbar'
+                class='android.widget.FrameLayout' bounds='[0,0][100,30]' />
+        </node></hierarchy>"""
+        self.assertEqual(extract_screen_titles(source), ["Connection preferences"])
+
+    def test_ocr_title_fallback_uses_large_upper_screen_text(self) -> None:
+        source = io.BytesIO()
+        Image.new("RGB", (1000, 2000), "white").save(source, format="PNG")
+        elements = [
+            UIElement(1, "3:23", "OCRText", "", "", (40, 20, 120, 45), (0.08, 0.016), False),
+            UIElement(2, "Pair", "OCRText", "", "", (50, 300, 210, 370), (0.13, 0.168), False),
+            UIElement(3, "new", "OCRText", "", "", (225, 302, 360, 370), (0.293, 0.168), False),
+            UIElement(4, "device", "OCRText", "", "", (375, 300, 620, 370), (0.498, 0.168), False),
+            UIElement(5, "Ordinary row", "OCRText", "", "", (50, 800, 300, 835), (0.175, 0.409), False),
+        ]
+        with patch("ivi_agent.perception.extract_ocr_elements", return_value=elements):
+            self.assertEqual(extract_ocr_screen_titles(source.getvalue()), ["Pair new device"])
 
     def test_extracts_visible_text_without_requiring_clickability(self) -> None:
         source = """<hierarchy><node bounds='[0,0][100,100]'>

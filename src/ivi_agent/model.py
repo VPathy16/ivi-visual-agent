@@ -11,6 +11,7 @@ from typing import Any
 
 from .perception import (
     extract_ocr_elements,
+    extract_ocr_screen_titles,
     extract_screen_titles,
     extract_ui_elements,
     extract_visible_text,
@@ -143,7 +144,7 @@ surprising permissions. Keep reason under 20 words. Return only action JSON.
 
 
 VERIFIER_PROMPT = """Independently verify whether the goal is visibly complete in this
-Android automotive IVI screenshot. Return only JSON:
+Android screenshot. Return only JSON:
 {"outcome":"pass|fail|inconclusive","confidence":0.0,"evidence":"specific visible evidence"}
 Use pass only when the screenshot clearly proves completion. Use fail only for a clear
 error or contradiction. Otherwise use inconclusive. Do not rely on the planner's claim.
@@ -743,23 +744,38 @@ class OllamaVisionModel:
                 )
             )
             titles = extract_screen_titles(ui_dump)
-            normalized_evidence = " ".join(
-                re.findall(r"[a-z0-9]+", str(result.get("evidence", "")).lower())
-            )
-            evidence_names_title = any(
-                " ".join(re.findall(r"[a-z0-9]+", title.lower()))
-                in normalized_evidence
+            if not titles and self.enable_ocr:
+                titles = extract_ocr_screen_titles(image)
+            destination = self._destination_name(goal)
+            destination_terms = set(re.findall(r"[a-z0-9]+", destination))
+            if len(destination_terms) > 1 and "settings" in destination_terms:
+                destination_terms.remove("settings")
+            matching_titles = [
+                title
                 for title in titles
-            )
-            if navigation_goal and ui_dump.strip() and (
-                not titles or not evidence_names_title
+                if destination_terms
+                and destination_terms.issubset(
+                    set(re.findall(r"[a-z0-9]+", title.lower()))
+                )
+            ]
+            matching_state_controls = [
+                element.label
+                for element in extract_ui_elements(ui_dump)
+                if element.stateful
+                and destination_terms
+                and destination_terms.issubset(
+                    set(re.findall(r"[a-z0-9]+", element.label.lower()))
+                )
+            ]
+            if navigation_goal and ui_dump.strip() and not (
+                matching_titles or matching_state_controls
             ):
                 return {
                     "outcome": "inconclusive",
                     "confidence": 0.0,
                     "evidence": (
-                        "Completion claim rejected because it was not anchored to an "
-                        "observed screen title"
+                        "Completion claim rejected because the destination was not the "
+                        "active screen title or a matching state control"
                     ),
                 }
             stop_words = {

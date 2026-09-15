@@ -282,8 +282,10 @@ def extract_screen_titles(ui_dump: str, limit: int = 4) -> list[str]:
         return []
     title_roles = {
         "action bar title",
+        "collapsing toolbar",
         "collapsing toolbar title",
         "header title",
+        "homepage title",
         "screen title",
         "toolbar title",
     }
@@ -296,6 +298,43 @@ def extract_screen_titles(ui_dump: str, limit: int = 4) -> list[str]:
         ):
             continue
         label = _label(node)
+        if label and label not in titles:
+            titles.append(label)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
+def extract_ocr_screen_titles(image: bytes, limit: int = 4) -> list[str]:
+    """Infer prominent upper-screen headings when accessibility omits them.
+
+    Some standard Android screens draw their large page heading without exposing a
+    title resource. Restricting the fallback to comparatively large OCR text in the
+    upper part of the image avoids treating ordinary rows or launcher labels as
+    screen titles.
+    """
+    with Image.open(io.BytesIO(image)) as source:
+        image_height = source.height
+    candidates = [
+        item
+        for item in extract_ocr_elements(image)
+        if 0.06 <= item.center[1] <= 0.30
+        and (item.bounds[3] - item.bounds[1]) >= image_height * 0.024
+    ]
+    candidates.sort(key=lambda item: (item.center[1], item.bounds[0]))
+    lines: list[list[UIElement]] = []
+    for item in candidates:
+        for line in lines:
+            line_center = sum(part.center[1] for part in line) / len(line)
+            if abs(item.center[1] - line_center) <= 0.015:
+                line.append(item)
+                break
+        else:
+            lines.append([item])
+    titles: list[str] = []
+    for line in lines:
+        label = " ".join(part.label for part in sorted(line, key=lambda part: part.bounds[0]))
+        label = " ".join(label.split())
         if label and label not in titles:
             titles.append(label)
         if len(titles) >= limit:
