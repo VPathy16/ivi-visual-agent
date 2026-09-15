@@ -168,7 +168,11 @@ Use long_press to open a context menu on a visible item, and double_tap only whe
 single tap is clearly insufficient; both ground exactly like tap (element_id or visual
 target). Use keyboard_enter to submit text already typed into a focused field. Use
 open_app with app_name only to launch a named application directly instead of hunting
-through a launcher; never invent a package name. A finish action requires an outcome.
+through a launcher; never invent a package name. When the goal concerns a system
+setting (for example Wi-Fi, Bluetooth, brightness, sound, or notifications) and no
+relevant control is visible on the current screen, prefer open_app with app_name
+"Settings" rather than tapping status-bar icons, clocks, or home-screen widgets.
+A finish action requires an outcome.
 Never guess an invisible control, delete data, place calls, purchase, reset, update
 software, or accept surprising permissions. Keep reason under 20 words. Return only
 action JSON.
@@ -791,6 +795,12 @@ class OllamaVisionModel:
                     response["target"] = response["candidate_target"]
                 if isinstance(response.get("element_id"), str) and response["element_id"].isdigit():
                     response["element_id"] = int(response["element_id"])
+                elif isinstance(response.get("element_id"), str):
+                    # Some models put a label (e.g. "3G") in element_id instead of a
+                    # candidate number. Treat it as a visual target and drop the id.
+                    if not response.get("target"):
+                        response["target"] = response["element_id"]
+                    response["element_id"] = None
                 # A finish proposal is only a request for independent visual
                 # verification; it never directly marks the run successful. Let
                 # compact local-model responses omit redundant result fields.

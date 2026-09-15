@@ -8,7 +8,7 @@ from PIL import Image
 
 from ivi_agent.adb import AdbDevice, AdbError
 from ivi_agent.config import Config
-from ivi_agent.model import ACTION_SCHEMA, OllamaVisionModel
+from ivi_agent.model import ACTION_SCHEMA, GROUNDING_SCHEMA, OllamaVisionModel
 from ivi_agent.policy import PolicyViolation, validate_action
 from ivi_agent.types import Action
 
@@ -239,6 +239,31 @@ class LenientPlanningTests(unittest.TestCase):
         self.assertEqual(action.type, "tap")
         self.assertEqual(action.element_id, 1)
         self.assertEqual(action.target, "Settings")
+
+
+class StringElementIdModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)  # grid grounding
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        if schema is GROUNDING_SCHEMA:
+            return {"found": True, "cell": 1, "confidence": 0.9, "evidence": "x"}
+        return {
+            "type": "tap",
+            "element_id": "3G",  # a label, not a candidate number
+            "target": "",
+            "confidence": 0.9,
+            "reason": "tap 3g",
+        }
+
+
+class StringElementIdTests(unittest.TestCase):
+    def test_non_numeric_element_id_becomes_visual_target(self) -> None:
+        action = StringElementIdModel().plan("Turn wifi on", _blank_png(), "", [])
+        self.assertEqual(action.type, "tap")
+        self.assertIsNone(action.element_id)
+        self.assertIsNotNone(action.x)
+        self.assertIsNotNone(action.y)
 
 
 class PointGroundingTests(unittest.TestCase):

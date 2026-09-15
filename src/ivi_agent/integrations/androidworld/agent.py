@@ -172,10 +172,18 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
                     data["reason"] = "repeated-action loop; no viable progress"
                     return self._done("infeasible", data)
         except (PolicyViolation, Exception) as exc:  # noqa: BLE001
-            data["reason"] = f"stopped safely: {exc}"
+            # A single planning failure should not end the episode: recover with a
+            # safe Back and let the next step re-observe, until the step budget runs
+            # out. This keeps one malformed model response from aborting the run.
+            data["reason"] = f"planning failed, recovering with back: {exc}"
+            self._log(data["reason"])
             if self._verbose:
                 traceback.print_exc()
-            return self._done("infeasible", data)
+            try:
+                self.env.execute_action(json_action.JSONAction(action_type="navigate_back"))
+            except Exception:  # noqa: BLE001
+                pass
+            return base_agent.AgentInteractionResult(self._at_budget(), data)
 
         data["action"] = {"type": action.type, "target": action.target, "reason": action.reason}
         self._log(
