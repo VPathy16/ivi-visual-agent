@@ -19,6 +19,11 @@ class Config:
     prefer_ui_tree: bool = True
     enable_ocr: bool = True
     max_image_dimension: int = 768
+    # Visual grounding strategy when no accessibility candidate exists:
+    #   "grid"  -> numbered 12x6 cell overlay (works with any small VLM)
+    #   "point" -> ask the VLM for normalized coordinates directly (needs a
+    #              grounding-capable model such as qwen3-vl)
+    grounding_mode: str = "grid"
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
     knowledge_root: str = "knowledge"

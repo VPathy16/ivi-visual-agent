@@ -419,16 +419,17 @@ The default `config.example.json` uses:
 ```json
 {
   "ollama_url": "http://127.0.0.1:11434",
-  "model": "qwen3.5:4b",
-  "max_actions": 12,
-  "timeout_seconds": 120,
-  "model_timeout_seconds": 30,
+  "model": "qwen3-vl:8b-instruct",
+  "max_actions": 16,
+  "timeout_seconds": 180,
+  "model_timeout_seconds": 60,
   "minimum_action_confidence": 0.75,
   "minimum_success_confidence": 0.85,
   "settle_timeout_seconds": 5.0,
   "prefer_ui_tree": true,
   "enable_ocr": true,
-  "max_image_dimension": 768,
+  "max_image_dimension": 1024,
+  "grounding_mode": "point",
   "allow_text_input": true,
   "protected_regions": [],
   "knowledge_root": "knowledge",
@@ -436,6 +437,18 @@ The default `config.example.json` uses:
   "knowledge_top_k": 4
 }
 ```
+
+`model` can be any Ollama vision model. A grounding-capable model such as
+`qwen3-vl:8b-instruct` (needs Ollama ≥ 0.12.7) is strongly recommended; a small
+model like `qwen3.5:4b` still works but grounds less accurately.
+
+`grounding_mode` selects how a visual target is located when no accessibility
+candidate exists:
+
+- `"point"` asks the model for normalized coordinates directly — precise, but
+  requires a GUI-grounding model such as Qwen3-VL.
+- `"grid"` overlays a numbered 12×6 cell grid and asks for a cell. This is the
+  device- and model-agnostic fallback that works with any small vision model.
 
 Set `knowledge_profile` in `config.json` to use one vehicle manual by default, or pass
 `--knowledge-profile` for an individual run. Generated knowledge profiles stay local.
@@ -453,6 +466,33 @@ Set `allow_text_input` to `false` for trials that must never type. The controlle
 rejects low-confidence actions, malformed coordinates, semantically unrelated targets,
 state-changing taps for navigation goals, repeated no-progress actions, unrequested
 permission changes, and destructive or external actions proposed by the model.
+
+## Action space
+
+The planner may choose one atomic action per step:
+
+`tap`, `long_press`, `double_tap`, `input_text`, `keyboard_enter`, `gesture`
+(scroll/page), `open_app` (launch a named app directly), `back`, `home`, `wait`,
+and `finish`. Pointer actions ground either by accessibility `element_id` or by
+visual target; `open_app` takes an app name and never a guessed package. Every
+action still passes the safety policy above before execution.
+
+## AndroidWorld benchmark
+
+The agent can be scored on Google's
+[AndroidWorld](https://github.com/google-research/android_world) benchmark via an
+adapter that keeps the local planner/grounder/verifier and only translates to
+AndroidWorld's environment interface. It needs an emulator with hardware
+acceleration (KVM or Apple Silicon). See
+[`src/ivi_agent/integrations/androidworld/README.md`](src/ivi_agent/integrations/androidworld/README.md).
+
+```bash
+pip install -e .
+pip install git+https://github.com/google-research/android_world.git
+
+python -m ivi_agent.integrations.androidworld.run_benchmark \
+    --config config.json --console-port 5554 --n-tasks 20
+```
 
 ## Run evidence
 
