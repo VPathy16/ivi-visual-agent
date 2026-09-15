@@ -40,7 +40,7 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
         env: Any,
         config_path: str | None = None,
         name: str = "ivi_visual_agent",
-        transition_pause: float | None = 1.0,
+        transition_pause: float | None = 0.5,
         verbose: bool = True,
     ) -> None:
         super().__init__(env, name, transition_pause=transition_pause)
@@ -125,8 +125,14 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
             self._subgoal_index += 1
             current_subgoal = self._plan[self._subgoal_index]
 
-        # 3. On the final subgoal, verify independently before finishing.
-        if self._subgoal_index == len(self._plan) - 1:
+        # 3. On the final subgoal, optionally verify independently before planning.
+        #    This is a full extra inference per step, so it is off by default
+        #    (verify_each_step): completion is still caught by a finish action and
+        #    the free screen-title match above.
+        if (
+            getattr(self.config, "verify_each_step", False)
+            and self._subgoal_index == len(self._plan) - 1
+        ):
             verification = self.model.verify(goal, image, ui_dump)
             if (
                 str(verification.get("outcome")) == "pass"

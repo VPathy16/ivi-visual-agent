@@ -260,6 +260,9 @@ class OllamaVisionModel:
             "model": self.model,
             "stream": False,
             "think": False,
+            # Keep the model resident between calls so it is not reloaded (a multi-GB
+            # reload dominates latency when the model is evicted between steps).
+            "keep_alive": "10m",
             # JSON mode is more compatible and faster than grammar compilation on the
             # older local Ollama versions used by bench machines. Validation is local.
             "format": "json",

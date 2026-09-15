@@ -31,6 +31,10 @@ class Config:
     # Ollama context window (num_ctx). A screenshot + UI candidates + history can
     # exceed Ollama's 4096 default, causing HTTP 400 exceed_context_size errors.
     model_context_tokens: int = 8192
+    # If True, the AndroidWorld adapter runs an extra verification inference before
+    # planning on every step on the final subgoal. Off is ~2x faster; completion is
+    # still caught by a proposed finish action and the free screen-title match.
+    verify_each_step: bool = False
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
     knowledge_root: str = "knowledge"
