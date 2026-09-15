@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "manual": {
+    "id": "sample-custom-ivi-v1",
+    "title": "Custom IVI Source Selection",
+    "ui_profile": "SampleDrive Cockpit",
+    "version": "2026.09",
+    "description": "Fictional manual showing how Audio, Sources and a proprietary LinkWave icon are used to select Bluetooth audio."
+  },
+  "icons": [
+    {
+      "id": "audio_hub",
+      "name": "Audio Hub",
+      "image": "images/icon-audio-hub.png",
+      "meaning": "Opens playback and media-source controls from the Home tile grid.",
+      "opens": "screen.audio_hub",
+      "synonyms": ["Audio", "Media", "Playback"]
+    },
+    {
+      "id": "sources",
+      "name": "Sources",
+      "image": "images/icon-sources.png",
+      "meaning": "Opens the list of available media inputs.",
+      "opens": "panel.audio_sources",
+      "synonyms": ["Source selector", "Inputs", "Choose source"]
+    },
+    {
+      "id": "linkwave",
+      "name": "LinkWave / BT Audio",
+      "image": "images/icon-linkwave.png",
+      "meaning": "This proprietary symbol represents Bluetooth audio as a media source.",
+      "opens": "action.select_bt_audio",
+      "synonyms": ["Bluetooth", "BT", "Wireless audio"]
+    }
+  ],
+  "screens": [
+    {
+      "id": "screen.home",
+      "name": "Home - Main tile grid",
+      "image": "images/home.png",
+      "description": "The main launcher contains large tiles. Tile positions can vary by vehicle configuration.",
+      "landmarks": ["Status bar at the top", "Large tile grid", "Audio tile uses the Audio Hub icon"],
+      "controls": [
+        {
+          "id": "home.audio_tile",
+          "name": "Audio tile",
+          "icon_id": "audio_hub",
+          "action": "Activate the tile",
+          "result": "screen.audio_hub"
+        }
+      ]
+    },
+    {
+      "id": "screen.audio_hub",
+      "name": "Audio Hub",
+      "image": "images/audio-hub.png",
+      "description": "Shows the active source and provides the Sources control.",
+      "landmarks": ["Audio Hub heading", "Active source label", "Sources control"],
+      "controls": [
+        {
+          "id": "audio.sources",
+          "name": "Sources",
+          "icon_id": "sources",
+          "action": "Open the source selector",
+          "result": "panel.audio_sources"
+        }
+      ]
+    },
+    {
+      "id": "screen.bt_selected",
+      "name": "Audio Hub - BT Audio selected",
+      "image": "images/bt-selected.png",
+      "description": "BT Audio is the active source and has a visible selected indicator.",
+      "landmarks": ["Source: BT Audio", "BT Audio row", "Selected check indicator"],
+      "controls": []
+    },
+    {
+      "id": "panel.audio_sources",
+      "name": "Audio source selector",
+      "image": "images/sources-open.png",
+      "description": "Lists available audio sources before Bluetooth has been selected.",
+      "landmarks": ["Sources heading", "Broadcast row is selected", "BT Audio row uses the LinkWave icon"],
+      "controls": [
+        {
+          "id": "sources.bt_audio",
+          "name": "BT Audio",
+          "icon_id": "linkwave",
+          "action": "Select Bluetooth audio",
+          "result": "screen.bt_selected"
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task.select_bt_source",
+      "name": "Select Bluetooth as the media source",
+      "goal": "Select Bluetooth as the media source",
+      "steps": [
+        {
+          "screen": "screen.home",
+          "target": "home.audio_tile",
+          "instruction": "Locate the Audio tile by its label or Audio Hub icon and activate it.",
+          "expected": "screen.audio_hub is visible"
+        },
+        {
+          "screen": "screen.audio_hub",
+          "target": "audio.sources",
+          "instruction": "Locate and activate Sources.",
+          "expected": "The audio source list is visible"
+        },
+        {
+          "screen": "panel.audio_sources",
+          "target": "sources.bt_audio",
+          "instruction": "Locate BT Audio by text, synonym or LinkWave icon and activate it once.",
+          "expected": "BT Audio becomes the selected source"
+        }
+      ],
+      "success": ["Source: BT Audio is visible", "BT Audio has a selected indicator"],
+      "forbidden": ["Do not open device pairing", "Do not toggle the Bluetooth radio", "Do not accept unexpected permissions"]
+    }
+  ]
+}

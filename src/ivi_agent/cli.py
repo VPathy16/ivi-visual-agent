@@ -73,12 +73,28 @@ def parser() -> argparse.ArgumentParser:
     mirror = commands.add_parser("scrcpy", help="Open a live scrcpy view")
     mirror.add_argument("--serial", help="ADB device serial")
     mirror.add_argument("--record", help="Optional MP4 recording path")
+
+    manual = commands.add_parser("manual", help="Build a RAG-friendly PDF manual")
+    manual_commands = manual.add_subparsers(dest="manual_command", required=True)
+    manual_build = manual_commands.add_parser(
+        "build", help="Validate a manual source folder and generate its PDF"
+    )
+    manual_build.add_argument(
+        "--source", required=True, help="Folder containing manual.json and images/"
+    )
+    manual_build.add_argument("--output", required=True, help="Generated PDF path")
     return root
 
 
 def main() -> None:
     args = parser().parse_args()
     try:
+        if args.command == "manual":
+            from .manual_pdf import build_manual_pdf
+
+            summary = build_manual_pdf(Path(args.source), Path(args.output))
+            print(json.dumps(summary, indent=2))
+            raise SystemExit(0)
         config = Config.load(args.config)
         if args.command == "doctor":
             raise SystemExit(doctor(config))

@@ -334,6 +334,41 @@ ivi-agent --config config.json run --serial IVI_SERIAL \
   --goal "Open the Bluetooth settings screen"
 ```
 
+## Custom Unity IVI using a PDF manual
+
+A Unity-rendered IVI may expose only one Android surface instead of individual controls.
+The recommended extension is local multimodal RAG: index the owner's manual text and
+page images, retrieve the relevant instructions and proprietary icon examples for the
+goal, then ground every action against the live screenshot. This requires no initial
+model training and stores no fixed tap coordinates.
+
+- [Simple architecture and runtime contract](docs/custom-ivi-pdf-rag.md)
+- [Editable sample manual folder](examples/custom-ivi-manual/)
+- [Sample custom-IVI RAG manual](output/pdf/sample-custom-ivi-rag-manual.pdf)
+
+Create a manual for a custom UI:
+
+```bash
+python -m pip install -e '.[docs]'
+
+cp -R examples/custom-ivi-manual examples/my-vehicle-manual
+# Replace the files in examples/my-vehicle-manual/images/.
+# Edit examples/my-vehicle-manual/manual.json.
+
+ivi-agent manual build \
+  --source examples/my-vehicle-manual \
+  --output output/pdf/my-vehicle-manual.pdf
+```
+
+The folder is the editable source of truth: screenshots and icon crops live under
+`images/`, while `manual.json` gives each image a stable name, meaning, screen
+relationship, task step, expected result, and safety restriction. The generator
+validates references and image files before producing the PDF. Do not store tap
+coordinates; the agent must locate the documented control on each live screenshot.
+
+To recreate the fictional image set included in this repository, run
+`python scripts/generate_sample_manual_images.py` before the build command.
+
 ## How the goal-driven loop works
 
 1. Convert the user goal into an optional entry-screen milestone and the exact requested
