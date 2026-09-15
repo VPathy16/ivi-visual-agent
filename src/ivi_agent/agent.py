@@ -233,7 +233,7 @@ class GoalAgent:
                     blocked_actions=[repr(item) for item in sorted(blocked_signatures, key=repr)],
                 )
                 decision_seconds = time.monotonic() - decision_started
-                validate_action(action, self.config)
+                validate_action(action, self.config, goal)
                 signature = action_signature(action)
                 if signature in blocked_signatures and action.type != "wait":
                     history.append(
@@ -261,7 +261,7 @@ class GoalAgent:
                         ],
                     )
                     decision_seconds += time.monotonic() - decision_started
-                    validate_action(replacement, self.config)
+                    validate_action(replacement, self.config, goal)
                     if action_signature(replacement) in blocked_signatures:
                         raise PolicyViolation(
                             "Repeated-action loop detected: the replacement already failed "

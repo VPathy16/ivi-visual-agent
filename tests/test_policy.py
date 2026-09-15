@@ -27,6 +27,65 @@ class PolicyTests(unittest.TestCase):
                 config,
             )
 
+    def test_rejects_unrequested_permission_change(self) -> None:
+        with self.assertRaisesRegex(PolicyViolation, "explicit permission goal"):
+            validate_action(
+                Action(
+                    type="tap",
+                    target="Grant permission",
+                    x=0.5,
+                    y=0.5,
+                    confidence=0.95,
+                    reason="App requests access",
+                ),
+                Config(),
+                "Open the Notifications settings screen",
+            )
+
+    def test_rejects_bare_allow_button_without_permission_goal(self) -> None:
+        with self.assertRaisesRegex(PolicyViolation, "explicit permission goal"):
+            validate_action(
+                Action(
+                    type="tap",
+                    target="Allow",
+                    x=0.5,
+                    y=0.5,
+                    confidence=0.95,
+                    reason="Visible button",
+                ),
+                Config(),
+                "Open sound settings",
+            )
+
+    def test_allows_explicit_permission_goal(self) -> None:
+        validate_action(
+            Action(
+                type="tap",
+                target="Grant permission",
+                x=0.5,
+                y=0.5,
+                confidence=0.95,
+                reason="User requested permission",
+            ),
+            Config(),
+            "Grant the media permission",
+        )
+
+    def test_blocks_destructive_action_even_when_confident(self) -> None:
+        with self.assertRaisesRegex(PolicyViolation, "blocked"):
+            validate_action(
+                Action(
+                    type="tap",
+                    target="Factory reset",
+                    x=0.5,
+                    y=0.5,
+                    confidence=0.99,
+                    reason="Visible control",
+                ),
+                Config(),
+                "Open system settings",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

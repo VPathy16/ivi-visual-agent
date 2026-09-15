@@ -340,6 +340,46 @@ class OllamaVisionModel:
                 return element
         return None
 
+    @staticmethod
+    def _destination_name(goal: str) -> str:
+        destination = " ".join(re.findall(r"[a-z0-9]+", goal.lower()))
+        destination = re.sub(
+            r"^(?:(?:go|navigate) to|open|show|launch|reach|view|display)"
+            r"(?: and (?:open|show|view|display))? (?:the )?",
+            "",
+            destination,
+        )
+        suffixes = ("main screen", "application", "app", "screen", "page", "menu")
+        changed = True
+        while changed:
+            changed = False
+            for suffix in suffixes:
+                if destination.endswith(f" {suffix}"):
+                    destination = destination[: -(len(suffix) + 1)].strip()
+                    changed = True
+                    break
+        return destination
+
+    @staticmethod
+    def _candidate_semantically_advances(
+        action: Action,
+        decision_goal: str,
+    ) -> bool:
+        generic = {
+            "a", "an", "and", "button", "car", "container", "control", "icon",
+            "item", "menu", "open", "screen", "show", "the", "to", "toolbar", "ui",
+        }
+        tokens = lambda value: set(re.findall(r"[a-z0-9]+", value.lower()))
+        target_tokens = tokens(action.target) - generic
+        goal_tokens = tokens(decision_goal) - generic - {
+            "app", "application", "display", "go", "launch", "navigate", "page", "reach",
+            "view",
+        }
+        if target_tokens & goal_tokens:
+            return True
+        reason_tokens = tokens(action.reason)
+        return bool(target_tokens & reason_tokens) and bool(goal_tokens & reason_tokens)
+
     def create_plan(self, goal: str) -> list[str]:
         prompt = f"USER GOAL: {goal}\nCreate observable, device-independent milestones."
         last_error = ""
@@ -376,7 +416,20 @@ class OllamaVisionModel:
                         subgoals.append(cleaned)
                 if not subgoals:
                     raise ValueError("plan was empty")
-                return subgoals
+                exact_goal = goal.strip()
+                if not exact_goal:
+                    raise ValueError("goal was empty")
+                # The model may suggest an entry screen, but it must not dictate
+                # speculative intermediate routes. Those are discovered from each
+                # observed screen. Always keep the user's exact goal as the final
+                # milestone.
+                first = subgoals[0]
+                normalize = lambda value: " ".join(
+                    re.findall(r"[a-z0-9]+", value.lower())
+                )
+                if normalize(first) == normalize(exact_goal) or len(subgoals) == 1:
+                    return [exact_goal]
+                return [first, exact_goal]
             except (ModelError, TypeError, ValueError) as exc:
                 last_error = str(exc)
         # The unsplit user goal remains a valid, device-independent plan. This
@@ -590,6 +643,27 @@ class OllamaVisionModel:
                             return action
                         raise ValueError(
                             "declared target does not match the selected candidate label"
+                        )
+                    if not self._candidate_semantically_advances(action, decision_goal):
+                        if use_visual_fallback and action.type == "tap":
+                            intended_target = self._destination_name(decision_goal)
+                            goal_terms = set(re.findall(r"[a-z0-9]+", intended_target))
+                            reason_terms = set(
+                                re.findall(r"[a-z0-9]+", action.reason.lower())
+                            )
+                            if intended_target and goal_terms & reason_terms:
+                                action.x, action.y, grounding_confidence = (
+                                    self._ground_visual_target(image, intended_target)
+                                )
+                                action.element_id = None
+                                action.target = intended_target.title()
+                                action.confidence = min(
+                                    action.confidence, grounding_confidence
+                                )
+                                return action
+                        raise ValueError(
+                            "selected candidate is not semantically related to the "
+                            "current subgoal"
                         )
                     navigation_goal = bool(
                         re.match(

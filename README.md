@@ -243,7 +243,8 @@ ivi-agent --config config.json run --serial IVI_SERIAL \
 
 ## How the goal-driven loop works
 
-1. Convert the user goal into a few observable, device-independent subgoals.
+1. Convert the user goal into an optional entry-screen milestone and the exact requested
+   result; discard speculative intermediate routes.
 2. Capture the selected physical display and Android UI hierarchy.
 3. Give the local model both the screenshot and grounded UI candidates.
 4. Use accessibility bounds when possible; otherwise locate the named visual target on
@@ -289,9 +290,9 @@ Coordinates in `protected_regions` are normalized rectangles in the form
 ```
 
 Set `allow_text_input` to `false` for trials that must never type. The controller also
-rejects low-confidence actions, malformed coordinates, state-changing taps for
-navigation goals, repeated no-progress actions, and destructive actions proposed by the
-model.
+rejects low-confidence actions, malformed coordinates, semantically unrelated targets,
+state-changing taps for navigation goals, repeated no-progress actions, unrequested
+permission changes, and destructive or external actions proposed by the model.
 
 ## Run evidence
 

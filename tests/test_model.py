@@ -192,6 +192,26 @@ class InvalidMilestoneModel(OllamaVisionModel):
         }
 
 
+class SpeculativeRouteModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://unused", "fake")
+
+    def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes | None,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "subgoals": [
+                {"description": "Open the Settings application"},
+                {"description": "Navigate to Network and Internet"},
+                {"description": "Open the Notifications settings screen"},
+            ]
+        }
+
+
 class PlannerRetryTests(unittest.TestCase):
     def test_retries_description_and_returns_action(self) -> None:
         image = io.BytesIO()
@@ -213,6 +233,47 @@ class PlannerRetryTests(unittest.TestCase):
     def test_invalid_control_visibility_plan_falls_back_to_user_goal(self) -> None:
         goal = "Open the Display settings screen"
         self.assertEqual(InvalidMilestoneModel().create_plan(goal), [goal])
+
+    def test_speculative_middle_route_is_pruned(self) -> None:
+        goal = "Open the Notifications settings screen"
+        self.assertEqual(
+            SpeculativeRouteModel().create_plan(goal),
+            ["Open the Settings application", goal],
+        )
+
+    def test_rejects_candidate_when_reason_names_a_different_target(self) -> None:
+        action = Action(
+            type="tap",
+            target="Local",
+            confidence=0.95,
+            reason="Settings icon is visible",
+        )
+        self.assertFalse(
+            OllamaVisionModel._candidate_semantically_advances(
+                action, "Open the Settings application"
+            )
+        )
+
+    def test_accepts_semantic_parent_explained_by_reason(self) -> None:
+        action = Action(
+            type="tap",
+            target="Connected devices",
+            confidence=0.95,
+            reason="Bluetooth settings are inside Connected devices",
+        )
+        self.assertTrue(
+            OllamaVisionModel._candidate_semantically_advances(
+                action, "Open the Bluetooth settings screen"
+            )
+        )
+
+    def test_extracts_visual_destination_without_route_words(self) -> None:
+        self.assertEqual(
+            OllamaVisionModel._destination_name(
+                "Reach the Settings application main screen"
+            ),
+            "settings",
+        )
 
     def test_rejects_state_change_for_navigation_goal_and_replans(self) -> None:
         image = io.BytesIO()
