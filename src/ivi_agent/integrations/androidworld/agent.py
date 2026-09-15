@@ -12,6 +12,8 @@ pure translation helpers remain testable without the benchmark installed.
 
 from __future__ import annotations
 
+import sys
+import traceback
 from typing import Any
 
 from android_world.agents import base_agent
@@ -39,8 +41,10 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
         config_path: str | None = None,
         name: str = "ivi_visual_agent",
         transition_pause: float | None = 1.0,
+        verbose: bool = True,
     ) -> None:
         super().__init__(env, name, transition_pause=transition_pause)
+        self._verbose = verbose
         self.config = Config.load(config_path)
         self.model = OllamaVisionModel(
             self.config.ollama_url,
@@ -66,7 +70,12 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
         self._step_count = 0
 
     # -- helpers -----------------------------------------------------------
+    def _log(self, message: str) -> None:
+        if self._verbose:
+            print(f"[ivi] {message}", file=sys.stderr, flush=True)
+
     def _done(self, status: str, data: dict[str, Any]) -> base_agent.AgentInteractionResult:
+        self._log(f"DONE status={status} reason={data.get('reason', '')}")
         try:
             self.env.execute_action(
                 json_action.JSONAction(action_type="status", goal_status=status)
@@ -91,10 +100,15 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
         if self._plan is None:
             self._plan = self.model.create_plan(goal)
             self._subgoal_index = 0
+            self._log(f"plan: {' -> '.join(self._plan)}")
         current_subgoal = self._plan[self._subgoal_index]
         data["plan"] = list(self._plan)
 
         titles = extract_screen_titles(ui_dump)
+        self._log(
+            f"step {self._step_count} subgoal[{self._subgoal_index}]={current_subgoal!r} "
+            f"titles={titles} ui_elements={ui_dump.count('<node')}"
+        )
 
         # 1. Final destination visible? Independent title match ends the episode.
         if title_satisfies_navigation_goal(goal, titles) is not None:
@@ -157,9 +171,15 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
                     return self._done("infeasible", data)
         except (PolicyViolation, Exception) as exc:  # noqa: BLE001
             data["reason"] = f"stopped safely: {exc}"
+            if self._verbose:
+                traceback.print_exc()
             return self._done("infeasible", data)
 
         data["action"] = {"type": action.type, "target": action.target, "reason": action.reason}
+        self._log(
+            f"action: {action.type} target={action.target!r} "
+            f"conf={action.confidence:.2f} x={action.x} y={action.y} reason={action.reason!r}"
+        )
 
         # 5. A finish proposal is a request for verification, not success itself.
         if action.type == "finish":
@@ -169,6 +189,8 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
                 and float(verification.get("confidence", 0.0))
                 >= self.config.minimum_success_confidence
             )
+            self._log(f"finish -> verify outcome={verification.get('outcome')} "
+                      f"conf={verification.get('confidence')} passed={passed}")
             data["reason"] = str(verification.get("evidence", "verification"))
             if passed:
                 return self._done("complete", data)
@@ -186,6 +208,7 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
         after_state = self.get_post_transition_state()
         after_hash = perceptual_hash(bridge.pixels_to_png(after_state.pixels))
         changed = hash_distance(screen_hash, after_hash) > 4
+        self._log(f"executed {action.type}; screen_changed={changed}")
         self._history.append(
             {
                 "step": self._step_count,
