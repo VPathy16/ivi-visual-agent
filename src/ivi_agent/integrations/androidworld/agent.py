@@ -55,6 +55,7 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
             max_image_dimension=self.config.max_image_dimension,
             grounding_mode=self.config.grounding_mode,
             lenient=self.config.lenient_planning,
+            num_ctx=self.config.model_context_tokens,
         )
         self._reset_episode()
 

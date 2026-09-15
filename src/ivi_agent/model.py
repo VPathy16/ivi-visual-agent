@@ -202,10 +202,12 @@ class OllamaVisionModel:
         max_image_dimension: int = 1024,
         grounding_mode: str = "grid",
         lenient: bool = False,
+        num_ctx: int = 8192,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.num_ctx = num_ctx
         self.prefer_ui_tree = prefer_ui_tree
         self.enable_ocr = enable_ocr
         self.max_image_dimension = max_image_dimension
@@ -261,7 +263,9 @@ class OllamaVisionModel:
                 {"role": "system", "content": system_prompt},
                 user_message,
             ],
-            "options": {"temperature": 0},
+            # num_ctx raises Ollama's default context window (often 4096), which a
+            # screenshot + UI candidates + history easily exceeds.
+            "options": {"temperature": 0, "num_ctx": self.num_ctx},
         }
         request = urllib.request.Request(
             f"{self.base_url}/api/chat",

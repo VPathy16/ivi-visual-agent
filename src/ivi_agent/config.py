@@ -28,6 +28,9 @@ class Config:
     # do not hard-fail on target-mismatch/semantic-relatedness. Needed for small
     # models exploring a benchmark; keep False for the strict goal-driven default.
     lenient_planning: bool = False
+    # Ollama context window (num_ctx). A screenshot + UI candidates + history can
+    # exceed Ollama's 4096 default, causing HTTP 400 exceed_context_size errors.
+    model_context_tokens: int = 8192
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
     knowledge_root: str = "knowledge"

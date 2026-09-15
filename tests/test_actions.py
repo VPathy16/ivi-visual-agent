@@ -1,5 +1,8 @@
 import io
+import json
 import unittest
+from contextlib import contextmanager
+from unittest import mock
 
 from PIL import Image
 
@@ -124,6 +127,26 @@ class AdbExecutionTests(unittest.TestCase):
         self.assertIn("%s", escaped)
         self.assertIn("\\&", escaped)
         self.assertIn("\\(", escaped)
+
+
+class NumCtxPayloadTests(unittest.TestCase):
+    def test_num_ctx_is_sent_in_options(self) -> None:
+        captured = {}
+
+        @contextmanager
+        def fake_urlopen(request, timeout=None):
+            captured["data"] = json.loads(request.data.decode("utf-8"))
+
+            class _Resp:
+                def read(self_inner):
+                    return json.dumps({"message": {"content": "{}"}}).encode("utf-8")
+
+            yield _Resp()
+
+        model = OllamaVisionModel("http://localhost", "m", num_ctx=16384)
+        with mock.patch("ivi_agent.model.urllib.request.urlopen", fake_urlopen):
+            model._chat("sys", "user", None, {})
+        self.assertEqual(captured["data"]["options"]["num_ctx"], 16384)
 
 
 class ModelSchemaTests(unittest.TestCase):

@@ -12,6 +12,7 @@
   "max_image_dimension": 1024,
   "grounding_mode": "point",
   "lenient_planning": true,
+  "model_context_tokens": 16384,
   "allow_text_input": true,
   "protected_regions": [],
   "knowledge_root": "knowledge",

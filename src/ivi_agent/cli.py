@@ -147,6 +147,7 @@ def main() -> None:
             max_image_dimension=config.max_image_dimension,
             grounding_mode=config.grounding_mode,
             lenient=config.lenient_planning,
+            num_ctx=config.model_context_tokens,
         )
         from .knowledge import KnowledgeBase
 
