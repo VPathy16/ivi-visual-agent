@@ -10,6 +10,6 @@
   "prefer_ui_tree": true,
   "enable_ocr": true,
   "max_image_dimension": 768,
-  "allow_text_input": false,
+  "allow_text_input": true,
   "protected_regions": []
 }

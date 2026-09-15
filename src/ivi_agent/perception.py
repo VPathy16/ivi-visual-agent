@@ -8,7 +8,7 @@ import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 BOUNDS_PATTERN = re.compile(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]")
@@ -25,6 +25,11 @@ class UIElement:
     center: tuple[float, float]
     scrollable: bool
     source: str = "ui_tree"
+    checkable: bool = False
+    checked: bool = False
+    stateful: bool = False
+    editable: bool = False
+    focused: bool = False
 
     def to_prompt_dict(self) -> dict[str, object]:
         return {
@@ -33,6 +38,11 @@ class UIElement:
             "role": self.role,
             "center": [round(self.center[0], 4), round(self.center[1], 4)],
             "scrollable": self.scrollable,
+            "checkable": self.checkable,
+            "checked": self.checked,
+            "stateful": self.stateful,
+            "editable": self.editable,
+            "focused": self.focused,
             "source": self.source,
         }
 
@@ -85,10 +95,13 @@ def extract_ui_elements(ui_dump: str, limit: int = 40) -> list[UIElement]:
     elements: list[UIElement] = []
     seen: set[tuple[tuple[int, int, int, int], str]] = set()
     for node, bounds in parsed_nodes:
+        role = node.attrib.get("class", "View").rsplit(".", 1)[-1]
+        editable = role == "EditText"
         interactive = (
             node.attrib.get("clickable") == "true"
             or node.attrib.get("checkable") == "true"
             or node.attrib.get("scrollable") == "true"
+            or editable
         )
         if not interactive:
             continue
@@ -101,7 +114,10 @@ def extract_ui_elements(ui_dump: str, limit: int = 40) -> list[UIElement]:
             continue
         seen.add(key)
         left, top, right, bottom = bounds
-        role = node.attrib.get("class", "View").rsplit(".", 1)[-1]
+        checkable = node.attrib.get("checkable") == "true"
+        stateful_label = bool(
+            re.match(r"^(?:on|off|enabled|disabled)(?:\b|\s*,)", label, re.IGNORECASE)
+        )
         elements.append(
             UIElement(
                 id=len(elements) + 1,
@@ -115,6 +131,11 @@ def extract_ui_elements(ui_dump: str, limit: int = 40) -> list[UIElement]:
                     ((top + bottom) / 2) / screen_height,
                 ),
                 scrollable=scrollable,
+                checkable=checkable,
+                checked=node.attrib.get("checked") == "true",
+                stateful=checkable or stateful_label,
+                editable=editable,
+                focused=node.attrib.get("focused") == "true",
             )
         )
         if len(elements) >= limit:
@@ -228,6 +249,60 @@ def packages_in_ui(ui_dump: str, limit: int = 8) -> list[str]:
     return packages
 
 
+def extract_screen_titles(ui_dump: str, limit: int = 4) -> list[str]:
+    """Return only controls explicitly identified by the UI as screen titles.
+
+    This intentionally uses semantic resource roles rather than device packages,
+    screen coordinates, or product-specific title text.
+    """
+    if not ui_dump.strip():
+        return []
+    try:
+        root = ET.fromstring(ui_dump)
+    except ET.ParseError:
+        return []
+    title_roles = {
+        "action bar title",
+        "collapsing toolbar title",
+        "header title",
+        "screen title",
+        "toolbar title",
+    }
+    titles: list[str] = []
+    for node in root.iter("node"):
+        resource_name = node.attrib.get("resource-id", "").rsplit("/", 1)[-1]
+        role = " ".join(re.findall(r"[a-z0-9]+", resource_name.lower()))
+        if role not in title_roles and not any(
+            role.endswith(f" {title_role}") for title_role in title_roles
+        ):
+            continue
+        label = _label(node)
+        if label and label not in titles:
+            titles.append(label)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
+def extract_visible_text(ui_dump: str, limit: int = 80) -> list[str]:
+    """Collect deduplicated text that Android reports as currently visible."""
+    if not ui_dump.strip():
+        return []
+    try:
+        root = ET.fromstring(ui_dump)
+    except ET.ParseError:
+        return []
+    values: list[str] = []
+    for node in root.iter("node"):
+        for key in ("text", "content-desc"):
+            value = " ".join(node.attrib.get(key, "").split())
+            if value and value not in values:
+                values.append(value)
+                if len(values) >= limit:
+                    return values
+    return values
+
+
 def prepare_model_image(image: bytes, max_dimension: int) -> bytes:
     if max_dimension <= 0:
         return image
@@ -236,6 +311,104 @@ def prepare_model_image(image: bytes, max_dimension: int) -> bytes:
         converted.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
         output = io.BytesIO()
         converted.save(output, format="JPEG", quality=82, optimize=True)
+        return output.getvalue()
+
+
+def prepare_grounded_model_image(
+    image: bytes,
+    elements: list[UIElement],
+    max_dimension: int,
+) -> bytes:
+    """Overlay candidate IDs so visual reasoning and structured targets agree."""
+    with Image.open(io.BytesIO(image)) as source:
+        converted = source.convert("RGB")
+        draw = ImageDraw.Draw(converted)
+        font_size = max(14, min(converted.size) // 28)
+        try:
+            font = ImageFont.load_default(size=font_size)
+        except TypeError:
+            font = ImageFont.load_default()
+        line_width = max(2, min(converted.size) // 300)
+        for element in elements:
+            left, top, right, bottom = element.bounds
+            draw.rectangle((left, top, right, bottom), outline="#ff3b30", width=line_width)
+            label = str(element.id)
+            text_box = draw.textbbox((left, top), label, font=font, stroke_width=1)
+            padding = 3
+            background = (
+                text_box[0] - padding,
+                text_box[1] - padding,
+                text_box[2] + padding,
+                text_box[3] + padding,
+            )
+            draw.rectangle(background, fill="#ff3b30")
+            draw.text(
+                (left, top),
+                label,
+                fill="white",
+                font=font,
+                stroke_width=1,
+                stroke_fill="#ff3b30",
+            )
+        if max_dimension > 0:
+            converted.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+        output = io.BytesIO()
+        converted.save(output, format="JPEG", quality=84, optimize=True)
+        return output.getvalue()
+
+
+def prepare_grid_grounding_image(
+    image: bytes,
+    max_dimension: int,
+    columns: int = 12,
+    rows: int = 6,
+) -> bytes:
+    """Overlay a device-independent numbered grid for coarse visual grounding.
+
+    Small local vision models are often good at recognizing a control but poor at
+    emitting pixel coordinates. A numbered grid turns localization into a simple
+    classification problem without encoding any device layout or application route.
+    Cells are numbered left-to-right and then top-to-bottom, starting at one.
+    """
+    with Image.open(io.BytesIO(image)) as source:
+        converted = source.convert("RGB")
+        if max_dimension > 0:
+            converted.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+        width, height = converted.size
+        draw = ImageDraw.Draw(converted)
+        font_size = max(12, min(converted.size) // 34)
+        try:
+            font = ImageFont.load_default(size=font_size)
+        except TypeError:
+            font = ImageFont.load_default()
+        line_width = max(1, min(converted.size) // 400)
+        for column in range(1, columns):
+            x = round(width * column / columns)
+            draw.line((x, 0, x, height), fill="#00e5ff", width=line_width)
+        for row in range(1, rows):
+            y = round(height * row / rows)
+            draw.line((0, y, width, y), fill="#00e5ff", width=line_width)
+        for row in range(rows):
+            for column in range(columns):
+                cell = row * columns + column + 1
+                x = round(width * column / columns) + 3
+                y = round(height * row / rows) + 2
+                label = str(cell)
+                box = draw.textbbox((x, y), label, font=font, stroke_width=1)
+                draw.rectangle(
+                    (box[0] - 2, box[1] - 1, box[2] + 2, box[3] + 1),
+                    fill="#111111",
+                )
+                draw.text(
+                    (x, y),
+                    label,
+                    fill="#00e5ff",
+                    font=font,
+                    stroke_width=1,
+                    stroke_fill="#111111",
+                )
+        output = io.BytesIO()
+        converted.save(output, format="JPEG", quality=88, optimize=True)
         return output.getvalue()
 
 

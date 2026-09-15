@@ -27,6 +27,15 @@ def write_report(result: RunResult) -> None:
             f"<td>{html.escape(action.reason)}</td>"
             "</tr>"
         )
+    subgoal_rows = "".join(
+        "<tr>"
+        f"<td>{item.number}</td>"
+        f"<td>{html.escape(item.description)}</td>"
+        f"<td>{html.escape(item.status)}</td>"
+        f"<td>{html.escape(item.evidence)}</td>"
+        "</tr>"
+        for item in result.subgoals
+    )
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>IVI Agent Report</title>
 <style>
@@ -40,6 +49,10 @@ img{{width:280px;height:auto}} th{{background:#f4f4f4}}
 <p class="outcome">Outcome: {html.escape(result.outcome.upper())}</p>
 <p>{html.escape(result.reason)}</p>
 <p>{html.escape(result.started_at)} — {html.escape(result.finished_at)}</p>
+<h2>Subgoals</h2>
+<table><thead><tr><th>#</th><th>Milestone</th><th>Status</th><th>Evidence</th></tr></thead>
+<tbody>{subgoal_rows}</tbody></table>
+<h2>Actions</h2>
 <table><thead><tr><th>#</th><th>Screen</th><th>Action</th><th>Target</th><th>Confidence</th><th>Decision</th><th>Reason</th></tr></thead>
 <tbody>{''.join(step_rows)}</tbody></table></body></html>"""
     (directory / "report.html").write_text(document, encoding="utf-8")

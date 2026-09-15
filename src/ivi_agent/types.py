@@ -4,7 +4,17 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 
-ActionKind = Literal["tap", "gesture", "swipe", "back", "home", "wait", "text", "finish"]
+ActionKind = Literal[
+    "tap",
+    "input_text",
+    "gesture",
+    "swipe",
+    "back",
+    "home",
+    "wait",
+    "text",
+    "finish",
+]
 Outcome = Literal["pass", "fail", "inconclusive"]
 
 
@@ -48,11 +58,23 @@ class StepRecord:
 
 
 @dataclass
+class SubgoalRecord:
+    number: int
+    description: str
+    status: Literal["pending", "running", "passed", "failed"] = "pending"
+    evidence: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
 class RunResult:
     goal: str
     outcome: Outcome
     reason: str
     run_directory: str
+    subgoals: list[SubgoalRecord] = field(default_factory=list)
     steps: list[StepRecord] = field(default_factory=list)
     started_at: str = ""
     finished_at: str = ""

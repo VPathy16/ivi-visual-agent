@@ -17,6 +17,7 @@ class AdbDevice:
     def __init__(self, serial: str | None = None, display_id: int | None = None) -> None:
         self.serial = serial
         self.display_id = display_id
+        self._resolved_capture_display_id: int | None = display_id
 
     def _base(self) -> list[str]:
         command = ["adb"]
@@ -46,6 +47,15 @@ class AdbDevice:
         if state != "device":
             raise AdbError(f"Device is not ready: {state or 'unknown state'}")
 
+    def wake_if_needed(self) -> None:
+        """Wake an Android display without assuming any product UI or unlock route."""
+        output = str(self._run("shell", "dumpsys", "power", timeout=10))
+        awake = re.search(r"(?:mWakefulness=|Wakefulness:\s*)Awake\b", output)
+        if awake:
+            return
+        self._run("shell", "input", "keyevent", "KEYCODE_WAKEUP", timeout=10)
+        time.sleep(0.5)
+
     def screen_size(self) -> tuple[int, int]:
         output = str(self._run("shell", "wm", "size"))
         matches = re.findall(r"(\d+)x(\d+)", output)
@@ -54,10 +64,27 @@ class AdbDevice:
         width, height = matches[-1]
         return int(width), int(height)
 
+    def capture_display_id(self) -> int | None:
+        if self._resolved_capture_display_id is not None:
+            return self._resolved_capture_display_id
+        try:
+            output = str(
+                self._run("shell", "dumpsys", "SurfaceFlinger", "--display-id", timeout=10)
+            )
+        except AdbError:
+            return None
+        matches = re.findall(r"Display\s+(\d+)\s+\(HWC display\s+(\d+)\)", output)
+        if not matches:
+            return None
+        primary = next((display for display, hwc in matches if hwc == "0"), matches[0][0])
+        self._resolved_capture_display_id = int(primary)
+        return self._resolved_capture_display_id
+
     def capture(self, destination: Path) -> bytes:
         args = ["exec-out", "screencap", "-p"]
-        if self.display_id is not None:
-            args += ["-d", str(self.display_id)]
+        capture_display_id = self.capture_display_id()
+        if capture_display_id is not None:
+            args += ["-d", str(capture_display_id)]
         image = self._run(*args, binary=True, timeout=30)
         assert isinstance(image, bytes)
         if not image.startswith(b"\x89PNG"):
@@ -81,21 +108,27 @@ class AdbDevice:
         if action.type == "tap":
             x, y = point(action.x, action.y)
             self._run("shell", "input", "tap", x, y)
+        elif action.type == "input_text":
+            x, y = point(action.x, action.y)
+            self._run("shell", "input", "tap", x, y)
+            time.sleep(0.2)
+            safe_text = action.text.replace("%", "%25").replace(" ", "%s")
+            self._run("shell", "input", "text", safe_text)
         elif action.type == "swipe":
             x1, y1 = point(action.x, action.y)
             x2, y2 = point(action.x2, action.y2)
             self._run("shell", "input", "swipe", x1, y1, x2, y2, str(action.duration_ms))
         elif action.type == "gesture":
             starts = {
-                "up": (0.5, 0.75, 0.5, 0.25),
-                "down": (0.5, 0.25, 0.5, 0.75),
-                "left": (0.75, 0.5, 0.25, 0.5),
-                "right": (0.25, 0.5, 0.75, 0.5),
+                "reveal_below": (0.5, 0.75, 0.5, 0.25),
+                "reveal_above": (0.5, 0.25, 0.5, 0.75),
+                "reveal_right": (0.75, 0.5, 0.25, 0.5),
+                "reveal_left": (0.25, 0.5, 0.75, 0.5),
             }
             x1n, y1n, x2n, y2n = starts[action.direction]
-            if action.direction in {"up", "down"} and action.region in {"left", "right"}:
+            if action.direction in {"reveal_above", "reveal_below"} and action.region in {"left", "right"}:
                 x1n = x2n = 0.25 if action.region == "left" else 0.75
-            if action.direction in {"left", "right"} and action.region in {"top", "bottom"}:
+            if action.direction in {"reveal_left", "reveal_right"} and action.region in {"top", "bottom"}:
                 y1n = y2n = 0.25 if action.region == "top" else 0.75
             x1, y1 = point(x1n, y1n)
             x2, y2 = point(x2n, y2n)

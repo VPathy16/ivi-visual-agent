@@ -75,13 +75,48 @@ class ModelResponseTests(unittest.TestCase):
         )
         self.assertEqual(selected.id, 2)
 
-    def test_direct_candidate_falls_back_to_settings(self) -> None:
+    def test_direct_candidate_does_not_use_generic_settings_overlap(self) -> None:
         settings = UIElement(1, "Settings", "Button", "ivi", "", (0, 0, 10, 10), (0.1, 0.1), False)
         media = UIElement(2, "Media", "Button", "ivi", "", (10, 0, 20, 10), (0.2, 0.1), False)
         selected = OllamaVisionModel._direct_candidate(
             "Open the Bluetooth settings screen", [settings, media]
         )
-        self.assertEqual(selected.id, 1)
+        self.assertIsNone(selected)
+
+    def test_direct_candidate_rejects_descriptive_toggle(self) -> None:
+        toggle = UIElement(
+            1,
+            "Show Bluetooth devices without names",
+            "Switch",
+            "ivi",
+            "",
+            (0, 0, 10, 10),
+            (0.1, 0.1),
+            False,
+            checkable=True,
+        )
+        self.assertIsNone(
+            OllamaVisionModel._direct_candidate(
+                "Open the Bluetooth settings screen", [toggle]
+            )
+        )
+
+    def test_direct_candidate_rejects_other_settings_destination(self) -> None:
+        notifications = UIElement(
+            1,
+            "Notification settings",
+            "Button",
+            "ivi",
+            "",
+            (0, 0, 10, 10),
+            (0.1, 0.1),
+            False,
+        )
+        self.assertIsNone(
+            OllamaVisionModel._direct_candidate(
+                "Open the Bluetooth settings screen", [notifications]
+            )
+        )
 
 
 class FakeModel(OllamaVisionModel):
@@ -102,6 +137,43 @@ class FakeModel(OllamaVisionModel):
         return self.responses.pop(0)
 
 
+class StatefulRetryModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://unused", "fake", enable_ocr=False)
+        self.responses = [
+            {
+                "type": "tap",
+                "element_id": "1",
+                "confidence": 0.95,
+                "reason": "Use Bluetooth control",
+            },
+            {"type": "home", "confidence": 0.9, "reason": "Leave unrelated control"},
+        ]
+
+    def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes | None,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self.responses.pop(0)
+
+
+class GridGroundingModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://unused", "fake")
+
+    def _chat(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        image: bytes | None,
+        schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {"found": True, "cell_number": 68}
+
+
 class PlannerRetryTests(unittest.TestCase):
     def test_retries_description_and_returns_action(self) -> None:
         image = io.BytesIO()
@@ -109,6 +181,28 @@ class PlannerRetryTests(unittest.TestCase):
         action = FakeModel().plan("Open settings", image.getvalue(), "", [])
         self.assertEqual(action.type, "home")
         self.assertEqual(action.confidence, 0.9)
+
+    def test_maps_small_model_grid_alias_to_cell_center(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (120, 60), "black").save(image, format="PNG")
+        x, y, confidence = GridGroundingModel()._ground_visual_target(
+            image.getvalue(), "Settings"
+        )
+        self.assertAlmostEqual(x, 0.625)
+        self.assertAlmostEqual(y, 11 / 12)
+        self.assertEqual(confidence, 0.8)
+
+    def test_rejects_state_change_for_navigation_goal_and_replans(self) -> None:
+        image = io.BytesIO()
+        Image.new("RGB", (4, 4), "black").save(image, format="PNG")
+        ui_dump = """<hierarchy><node bounds='[0,0][100,100]'>
+          <node content-desc='Off, Bluetooth, Button' class='android.widget.LinearLayout'
+                clickable='true' bounds='[10,10][90,40]' />
+        </node></hierarchy>"""
+        action = StatefulRetryModel().plan(
+            "Open the Bluetooth settings screen", image.getvalue(), ui_dump, []
+        )
+        self.assertEqual(action.type, "home")
 
 
 if __name__ == "__main__":

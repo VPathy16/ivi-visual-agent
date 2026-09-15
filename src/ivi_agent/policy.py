@@ -9,7 +9,17 @@ class PolicyViolation(ValueError):
 
 
 def validate_action(action: Action, config: Config) -> None:
-    valid = {"tap", "gesture", "swipe", "back", "home", "wait", "text", "finish"}
+    valid = {
+        "tap",
+        "input_text",
+        "gesture",
+        "swipe",
+        "back",
+        "home",
+        "wait",
+        "text",
+        "finish",
+    }
     if action.type not in valid:
         raise PolicyViolation(f"Unsupported action type: {action.type}")
     if not 0.0 <= action.confidence <= 1.0:
@@ -19,22 +29,31 @@ def validate_action(action: Action, config: Config) -> None:
             f"Action confidence {action.confidence:.2f} is below "
             f"{config.minimum_action_confidence:.2f}"
         )
-    if action.type in {"tap", "swipe"}:
+    if action.type in {"tap", "input_text", "swipe"}:
         coordinates = [action.x, action.y]
         if action.type == "swipe":
             coordinates += [action.x2, action.y2]
         if any(value is None or not 0.0 <= value <= 1.0 for value in coordinates):
             raise PolicyViolation("Visual action coordinates must be normalized between 0 and 1")
     if action.type == "gesture":
-        if action.direction not in {"up", "down", "left", "right"}:
-            raise PolicyViolation("Gesture direction must be up, down, left, or right")
+        if action.direction not in {
+            "reveal_above",
+            "reveal_below",
+            "reveal_left",
+            "reveal_right",
+        }:
+            raise PolicyViolation(
+                "Gesture direction must be reveal_above, reveal_below, reveal_left, or reveal_right"
+            )
         if action.region not in {"center", "top", "bottom", "left", "right"}:
             raise PolicyViolation("Gesture region is invalid")
-    if action.type == "text" and not config.allow_text_input:
+    if action.type in {"text", "input_text"} and not config.allow_text_input:
         raise PolicyViolation("Text input is disabled by policy")
+    if action.type == "input_text" and not action.text:
+        raise PolicyViolation("Input text cannot be empty")
     if action.type == "finish" and action.outcome not in {"pass", "fail", "inconclusive"}:
         raise PolicyViolation("Finish action must contain a valid outcome")
-    if action.type == "tap":
+    if action.type in {"tap", "input_text"}:
         assert action.x is not None and action.y is not None
         for region in config.protected_regions or []:
             if len(region) == 4 and region[0] <= action.x <= region[2] and region[1] <= action.y <= region[3]:

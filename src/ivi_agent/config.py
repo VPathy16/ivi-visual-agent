@@ -19,7 +19,7 @@ class Config:
     prefer_ui_tree: bool = True
     enable_ocr: bool = True
     max_image_dimension: int = 768
-    allow_text_input: bool = False
+    allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
 
     def __post_init__(self) -> None:
