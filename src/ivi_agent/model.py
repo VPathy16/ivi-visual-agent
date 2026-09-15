@@ -824,6 +824,32 @@ class OllamaVisionModel:
                 }:
                     raise ValueError("unknown action type")
                 if (
+                    action.type in ({"input_text"} | tap_like)
+                    and action.element_id is None
+                    and action.target
+                    and elements
+                ):
+                    # Models often name the control ("Network & internet") instead
+                    # of returning its candidate number. Resolve the named target to
+                    # an accessibility candidate by label before falling back to
+                    # visual grounding.
+                    normalize = lambda value: " ".join(
+                        re.findall(r"[a-z0-9]+", value.lower())
+                    )
+                    wanted = normalize(action.target)
+                    match = next(
+                        (el for el in elements if normalize(el.label) == wanted), None
+                    )
+                    if match is None and wanted:
+                        match = next(
+                            (el for el in elements if wanted in normalize(el.label)),
+                            None,
+                        )
+                    if match is not None:
+                        action.element_id = match.id
+                        action.x, action.y = match.center
+                        action.target = match.label
+                if (
                     action.type in tap_like
                     and use_visual_fallback
                     and action.element_id is None

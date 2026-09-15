@@ -266,6 +266,36 @@ class StringElementIdTests(unittest.TestCase):
         self.assertIsNotNone(action.y)
 
 
+class NamedTargetModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # Names the control, gives no element_id and no coordinates.
+        return {
+            "type": "tap",
+            "target": "Network & internet",
+            "confidence": 0.9,
+            "reason": "open network settings",
+        }
+
+
+class NamedTargetResolutionTests(unittest.TestCase):
+    def test_named_target_resolves_to_accessibility_candidate(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Network &amp; internet" class="android.widget.TextView" '
+            'clickable="true" bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = NamedTargetModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertEqual(action.element_id, 1)
+        self.assertIsNotNone(action.x)
+        self.assertIsNotNone(action.y)
+
+
 class PointGroundingTests(unittest.TestCase):
     def test_point_mode_returns_normalized_coordinates(self) -> None:
         x, y, confidence = PointGroundingModel()._ground_visual_target(_blank_png(), "OK")
