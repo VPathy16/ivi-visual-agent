@@ -306,6 +306,29 @@ class UngroundedNamedTargetModel(OllamaVisionModel):
         return {"type": "tap", "target": "Wi-Fi", "confidence": 0.9, "reason": "tap wifi"}
 
 
+class NoConfidenceModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m")
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # A tap that omits the required confidence and reason fields.
+        return {"type": "tap", "element_id": 1, "target": "Wifi"}
+
+
+class MissingFieldDefaultTests(unittest.TestCase):
+    def test_tap_without_confidence_is_defaulted_not_crashed(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Wifi" class="android.widget.TextView" clickable="true" '
+            'bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = NoConfidenceModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertGreaterEqual(action.confidence, 0.75)
+
+
 class LenientVisualGroundingTests(unittest.TestCase):
     def test_named_target_not_a_candidate_is_visually_grounded(self) -> None:
         # The only accessibility candidate is Bluetooth, so "Wi-Fi" cannot match a

@@ -771,21 +771,15 @@ class OllamaVisionModel:
                     ):
                         # A concrete tap target was named; the verb was just mislabeled.
                         response["type"] = "tap"
-                safe_compact_types = {
-                    "back",
-                    "finish",
-                    "gesture",
-                    "home",
-                    "input_text",
-                    "keyboard_enter",
-                    "open_app",
-                    "wait",
-                }
-                if response.get("type") in safe_compact_types:
+                # The schema requires type, confidence, and reason, but small models
+                # routinely omit confidence and/or reason -- even for taps. Default
+                # them for any recognized action type rather than failing
+                # Action.from_dict on a missing required argument.
+                if isinstance(response.get("type"), str):
                     response.setdefault("confidence", 0.8)
                     response.setdefault(
                         "reason",
-                        f"Constrained {response['type']} action proposed by local model",
+                        f"{response['type']} action proposed by local model",
                     )
                 if (
                     response.get("type") in {"tap", "input_text"}
