@@ -11,6 +11,7 @@
   "enable_ocr": true,
   "max_image_dimension": 1024,
   "grounding_mode": "point",
+  "lenient_planning": true,
   "allow_text_input": true,
   "protected_regions": [],
   "knowledge_root": "knowledge",

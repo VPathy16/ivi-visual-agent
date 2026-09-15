@@ -54,6 +54,7 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
             enable_ocr=self.config.enable_ocr,
             max_image_dimension=self.config.max_image_dimension,
             grounding_mode=self.config.grounding_mode,
+            lenient=self.config.lenient_planning,
         )
         self._reset_episode()
 

@@ -201,6 +201,7 @@ class OllamaVisionModel:
         enable_ocr: bool = True,
         max_image_dimension: int = 1024,
         grounding_mode: str = "grid",
+        lenient: bool = False,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -211,6 +212,11 @@ class OllamaVisionModel:
         if grounding_mode not in {"grid", "point"}:
             raise ValueError("grounding_mode must be 'grid' or 'point'")
         self.grounding_mode = grounding_mode
+        # Lenient mode trusts a concretely-resolved element_id: it backfills a
+        # missing target label and does not hard-fail on target-mismatch or
+        # semantic-relatedness. Small models exploring a benchmark need this;
+        # the strict default preserves the original goal-driven guardrails.
+        self.lenient = lenient
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:
@@ -841,9 +847,20 @@ class OllamaVisionModel:
                         re.findall(r"[a-z0-9]+", selected.label.lower())
                     )
                     if not declared_target:
-                        raise ValueError("candidate action must declare its exact target label")
+                        if self.lenient:
+                            # Trust the resolved candidate; backfill its label.
+                            action.target = selected.label
+                            declared_target = selected_target
+                        else:
+                            raise ValueError(
+                                "candidate action must declare its exact target label"
+                            )
                     if declared_target != selected_target:
-                        if use_visual_fallback and action.type in tap_like:
+                        if self.lenient and action.element_id in candidate_ids:
+                            # A concrete id was chosen; trust it over the mislabel.
+                            action.target = selected.label
+                            declared_target = selected_target
+                        elif use_visual_fallback and action.type in tap_like:
                             # OCR boxes are hints, not authority. If the model names a
                             # different visible control, discard its incorrect box ID
                             # and independently ground that semantic target.
@@ -861,7 +878,11 @@ class OllamaVisionModel:
                             "declared target does not match the selected candidate label"
                         )
                     if not self._candidate_semantically_advances(action, decision_goal):
-                        if use_visual_fallback and action.type in tap_like:
+                        if self.lenient:
+                            # Let the agent explore; loop-detection and independent
+                            # verification still guard against unproductive taps.
+                            pass
+                        elif use_visual_fallback and action.type in tap_like:
                             intended_target = self._destination_name(decision_goal)
                             goal_terms = set(re.findall(r"[a-z0-9]+", intended_target))
                             reason_terms = set(
@@ -879,10 +900,11 @@ class OllamaVisionModel:
                                     action.confidence, grounding_confidence
                                 )
                                 return action
-                        raise ValueError(
-                            "selected candidate is not semantically related to the "
-                            "current subgoal"
-                        )
+                        if not self.lenient:
+                            raise ValueError(
+                                "selected candidate is not semantically related to the "
+                                "current subgoal"
+                            )
                     navigation_goal = bool(
                         re.match(
                             r"^\s*(?:open|show|go\s+to|navigate\s+to|launch)\b",

@@ -185,6 +185,39 @@ class ActionTypeCoercionTests(unittest.TestCase):
         self.assertEqual(action.element_id, 1)
 
 
+class LenientNoTargetModel(OllamaVisionModel):
+    def __init__(self, lenient: bool) -> None:
+        super().__init__("http://localhost", "m", lenient=lenient)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # Valid element_id but NO target label and an unrelated reason.
+        return {"type": "tap", "element_id": 1, "confidence": 0.9, "reason": "go"}
+
+
+class LenientPlanningTests(unittest.TestCase):
+    UI = (
+        '<hierarchy rotation="0">'
+        '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+        '<node text="Settings" class="android.widget.TextView" clickable="true" '
+        'bounds="[10,10][90,40]"/>'
+        "</node></hierarchy>"
+    )
+
+    def test_strict_mode_rejects_missing_target(self) -> None:
+        from ivi_agent.model import ModelError
+
+        with self.assertRaises(ModelError):
+            LenientNoTargetModel(lenient=False).plan("Turn wifi on", _blank_png(), self.UI, [])
+
+    def test_lenient_mode_backfills_target_and_taps(self) -> None:
+        action = LenientNoTargetModel(lenient=True).plan(
+            "Turn wifi on", _blank_png(), self.UI, []
+        )
+        self.assertEqual(action.type, "tap")
+        self.assertEqual(action.element_id, 1)
+        self.assertEqual(action.target, "Settings")
+
+
 class PointGroundingTests(unittest.TestCase):
     def test_point_mode_returns_normalized_coordinates(self) -> None:
         x, y, confidence = PointGroundingModel()._ground_visual_target(_blank_png(), "OK")

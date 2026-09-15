@@ -24,6 +24,10 @@ class Config:
     #   "point" -> ask the VLM for normalized coordinates directly (needs a
     #              grounding-capable model such as qwen3-vl)
     grounding_mode: str = "grid"
+    # Trust a concretely-resolved element_id: backfill a missing target label and
+    # do not hard-fail on target-mismatch/semantic-relatedness. Needed for small
+    # models exploring a benchmark; keep False for the strict goal-driven default.
+    lenient_planning: bool = False
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
     knowledge_root: str = "knowledge"
