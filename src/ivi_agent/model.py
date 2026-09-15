@@ -996,6 +996,12 @@ class OllamaVisionModel:
             [prepared, *(reference_images or [])],
             VERIFICATION_SCHEMA,
         )
+        if result.get("outcome") == "pass" and self.lenient:
+            # Trust the model's visual verdict on the benchmark. The text-subset
+            # heuristics below cannot verify state-change goals ("Turn wifi on":
+            # the verb never appears on screen and "wifi" tokenizes as wi/fi), so
+            # they would loop the agent on an already-completed task.
+            return result
         if result.get("outcome") == "pass":
             navigation_goal = bool(
                 re.match(

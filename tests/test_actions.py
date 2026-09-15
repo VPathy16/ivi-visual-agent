@@ -347,6 +347,24 @@ class LenientVisualGroundingTests(unittest.TestCase):
         self.assertIsNotNone(action.y)
 
 
+class _VerifyPassModel(OllamaVisionModel):
+    def __init__(self, lenient: bool) -> None:
+        super().__init__("http://localhost", "m", lenient=lenient, enable_ocr=False)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        return {"outcome": "pass", "confidence": 0.95, "evidence": "blue Wi-Fi toggle is on"}
+
+
+class StateChangeVerifyTests(unittest.TestCase):
+    def test_lenient_verify_trusts_model_pass_for_state_change_goal(self) -> None:
+        result = _VerifyPassModel(lenient=True).verify("Turn wifi on", _blank_png(), "")
+        self.assertEqual(result["outcome"], "pass")
+
+    def test_strict_verify_downgrades_when_terms_not_on_screen(self) -> None:
+        result = _VerifyPassModel(lenient=False).verify("Turn wifi on", _blank_png(), "")
+        self.assertEqual(result["outcome"], "inconclusive")
+
+
 class PointGroundingTests(unittest.TestCase):
     def test_point_mode_returns_normalized_coordinates(self) -> None:
         x, y, confidence = PointGroundingModel()._ground_visual_target(_blank_png(), "OK")
