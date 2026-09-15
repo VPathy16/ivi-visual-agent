@@ -15,6 +15,7 @@ def write_report(result: RunResult) -> None:
     step_rows = []
     for step in result.steps:
         action = step.action
+        decision = f"{step.decision_seconds:.2f}s" if step.decision_seconds is not None else "—"
         step_rows.append(
             "<tr>"
             f"<td>{step.number}</td>"
@@ -22,6 +23,7 @@ def write_report(result: RunResult) -> None:
             f"<td>{html.escape(action.type)}</td>"
             f"<td>{html.escape(action.target)}</td>"
             f"<td>{action.confidence:.2f}</td>"
+            f"<td>{decision}</td>"
             f"<td>{html.escape(action.reason)}</td>"
             "</tr>"
         )
@@ -38,7 +40,6 @@ img{{width:280px;height:auto}} th{{background:#f4f4f4}}
 <p class="outcome">Outcome: {html.escape(result.outcome.upper())}</p>
 <p>{html.escape(result.reason)}</p>
 <p>{html.escape(result.started_at)} — {html.escape(result.finished_at)}</p>
-<table><thead><tr><th>#</th><th>Screen</th><th>Action</th><th>Target</th><th>Confidence</th><th>Reason</th></tr></thead>
+<table><thead><tr><th>#</th><th>Screen</th><th>Action</th><th>Target</th><th>Confidence</th><th>Decision</th><th>Reason</th></tr></thead>
 <tbody>{''.join(step_rows)}</tbody></table></body></html>"""
     (directory / "report.html").write_text(document, encoding="utf-8")
-

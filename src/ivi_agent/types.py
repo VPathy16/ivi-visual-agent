@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 
-ActionKind = Literal["tap", "swipe", "back", "home", "wait", "text", "finish"]
+ActionKind = Literal["tap", "gesture", "swipe", "back", "home", "wait", "text", "finish"]
 Outcome = Literal["pass", "fail", "inconclusive"]
 
 
@@ -14,6 +14,9 @@ class Action:
     confidence: float
     reason: str
     target: str = ""
+    element_id: int | None = None
+    direction: str = ""
+    region: str = "center"
     x: float | None = None
     y: float | None = None
     x2: float | None = None
@@ -37,6 +40,7 @@ class StepRecord:
     action: Action
     ui_dump_available: bool
     screen_changed: bool | None = None
+    decision_seconds: float | None = None
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -55,4 +59,3 @@ class RunResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-

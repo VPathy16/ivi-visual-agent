@@ -1,12 +1,15 @@
 {
   "ollama_url": "http://127.0.0.1:11434",
-  "model": "gemma3:12b",
-  "max_actions": 20,
-  "timeout_seconds": 180,
+  "model": "qwen3.5:4b",
+  "max_actions": 12,
+  "timeout_seconds": 120,
+  "model_timeout_seconds": 30,
   "minimum_action_confidence": 0.75,
   "minimum_success_confidence": 0.85,
   "settle_timeout_seconds": 5,
+  "prefer_ui_tree": true,
+  "enable_ocr": true,
+  "max_image_dimension": 768,
   "allow_text_input": false,
   "protected_regions": []
 }
-

@@ -9,12 +9,16 @@ from typing import Any
 @dataclass
 class Config:
     ollama_url: str = "http://127.0.0.1:11434"
-    model: str = "gemma3:12b"
-    max_actions: int = 20
-    timeout_seconds: int = 180
+    model: str = "qwen3.5:4b"
+    max_actions: int = 12
+    timeout_seconds: int = 120
+    model_timeout_seconds: int = 30
     minimum_action_confidence: float = 0.75
     minimum_success_confidence: float = 0.85
     settle_timeout_seconds: float = 5.0
+    prefer_ui_tree: bool = True
+    enable_ocr: bool = True
+    max_image_dimension: int = 768
     allow_text_input: bool = False
     protected_regions: list[list[float]] | None = None
 
@@ -32,4 +36,3 @@ class Config:
         if unknown:
             raise ValueError(f"Unknown configuration keys: {', '.join(unknown)}")
         return cls(**data)
-

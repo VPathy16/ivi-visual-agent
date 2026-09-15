@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 import re
 import subprocess
 import time
 from pathlib import Path
 
+from .perception import hash_distance, perceptual_hash
 from .types import Action
 
 
@@ -85,6 +85,21 @@ class AdbDevice:
             x1, y1 = point(action.x, action.y)
             x2, y2 = point(action.x2, action.y2)
             self._run("shell", "input", "swipe", x1, y1, x2, y2, str(action.duration_ms))
+        elif action.type == "gesture":
+            starts = {
+                "up": (0.5, 0.75, 0.5, 0.25),
+                "down": (0.5, 0.25, 0.5, 0.75),
+                "left": (0.75, 0.5, 0.25, 0.5),
+                "right": (0.25, 0.5, 0.75, 0.5),
+            }
+            x1n, y1n, x2n, y2n = starts[action.direction]
+            if action.direction in {"up", "down"} and action.region in {"left", "right"}:
+                x1n = x2n = 0.25 if action.region == "left" else 0.75
+            if action.direction in {"left", "right"} and action.region in {"top", "bottom"}:
+                y1n = y2n = 0.25 if action.region == "top" else 0.75
+            x1, y1 = point(x1n, y1n)
+            x2, y2 = point(x2n, y2n)
+            self._run("shell", "input", "swipe", x1, y1, x2, y2, str(action.duration_ms))
         elif action.type == "back":
             self._run("shell", "input", "keyevent", "KEYCODE_BACK")
         elif action.type == "home":
@@ -99,13 +114,13 @@ class AdbDevice:
 
     def wait_until_stable(self, directory: Path, timeout: float) -> bool:
         deadline = time.monotonic() + timeout
-        previous: str | None = None
+        previous: int | None = None
         stable_count = 0
         sample = directory / ".stability.png"
         while time.monotonic() < deadline:
             image = self.capture(sample)
-            digest = hashlib.sha256(image).hexdigest()
-            if digest == previous:
+            digest = perceptual_hash(image)
+            if previous is not None and hash_distance(digest, previous) <= 2:
                 stable_count += 1
                 if stable_count >= 2:
                     sample.unlink(missing_ok=True)
@@ -116,4 +131,3 @@ class AdbDevice:
             time.sleep(0.35)
         sample.unlink(missing_ok=True)
         return False
-

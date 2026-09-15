@@ -9,7 +9,7 @@ class PolicyViolation(ValueError):
 
 
 def validate_action(action: Action, config: Config) -> None:
-    valid = {"tap", "swipe", "back", "home", "wait", "text", "finish"}
+    valid = {"tap", "gesture", "swipe", "back", "home", "wait", "text", "finish"}
     if action.type not in valid:
         raise PolicyViolation(f"Unsupported action type: {action.type}")
     if not 0.0 <= action.confidence <= 1.0:
@@ -25,6 +25,11 @@ def validate_action(action: Action, config: Config) -> None:
             coordinates += [action.x2, action.y2]
         if any(value is None or not 0.0 <= value <= 1.0 for value in coordinates):
             raise PolicyViolation("Visual action coordinates must be normalized between 0 and 1")
+    if action.type == "gesture":
+        if action.direction not in {"up", "down", "left", "right"}:
+            raise PolicyViolation("Gesture direction must be up, down, left, or right")
+        if action.region not in {"center", "top", "bottom", "left", "right"}:
+            raise PolicyViolation("Gesture region is invalid")
     if action.type == "text" and not config.allow_text_input:
         raise PolicyViolation("Text input is disabled by policy")
     if action.type == "finish" and action.outcome not in {"pass", "fail", "inconclusive"}:
@@ -34,4 +39,3 @@ def validate_action(action: Action, config: Config) -> None:
         for region in config.protected_regions or []:
             if len(region) == 4 and region[0] <= action.x <= region[2] and region[1] <= action.y <= region[3]:
                 raise PolicyViolation(f"Tap target is inside protected region {region}")
-

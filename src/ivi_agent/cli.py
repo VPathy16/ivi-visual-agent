@@ -17,7 +17,7 @@ from .model import OllamaVisionModel
 
 def doctor(config: Config) -> int:
     checks: list[tuple[str, bool, str]] = []
-    for executable in ("adb", "scrcpy", "ollama"):
+    for executable in ("adb", "scrcpy", "ollama", "tesseract"):
         location = shutil.which(executable)
         checks.append((executable, bool(location), location or "not found in PATH"))
     try:
@@ -76,8 +76,20 @@ def main() -> None:
         if args.command == "scrcpy":
             raise SystemExit(launch_scrcpy(args.serial, args.record))
         device = AdbDevice(args.serial, args.display_id)
-        model = OllamaVisionModel(config.ollama_url, config.model)
-        agent = GoalAgent(device, model, config)
+        model = OllamaVisionModel(
+            config.ollama_url,
+            config.model,
+            timeout=config.model_timeout_seconds,
+            prefer_ui_tree=config.prefer_ui_tree,
+            enable_ocr=config.enable_ocr,
+            max_image_dimension=config.max_image_dimension,
+        )
+        agent = GoalAgent(
+            device,
+            model,
+            config,
+            progress=lambda message: print(message, file=sys.stderr, flush=True),
+        )
         result = agent.run(args.goal, Path(args.output), dry_run=args.dry_run)
         print(json.dumps(result.to_dict(), indent=2))
         raise SystemExit(0 if result.outcome == "pass" else 2)
@@ -88,4 +100,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

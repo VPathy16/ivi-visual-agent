@@ -13,7 +13,11 @@ to a production vehicle without an appropriate safety review.
 - Captures the IVI display through ADB.
 - Includes the Android UI hierarchy when it is available.
 - Uses a local Ollama vision model to select one action at a time.
-- Restricts the model to tap, swipe, Back, Home, wait, optional text, or finish.
+- Selects numbered accessibility/OCR candidates instead of allowing arbitrary taps.
+- Uses a fast text-only plan when Android exposes usable UI controls.
+- Resizes screenshots before the slower visual fallback.
+- Converts swipes into bounded direction/region gestures.
+- Restricts the model to grounded taps, gestures, Back, Home, wait, optional text, or finish.
 - Requires an independent visual verification before reporting success.
 - Writes screenshots, JSON results, and an HTML report under `runs/`.
 - Launches `scrcpy` for live observation or session recording.
@@ -24,24 +28,25 @@ to a production vehicle without an appropriate safety review.
 - Android platform-tools (`adb`)
 - `scrcpy`
 - Ollama
-- An Ollama vision model, initially configured as `gemma3:12b`
+- Tesseract OCR
+- An Ollama vision model, initially configured as `qwen3.5:4b`
 - An Android IVI or emulator with ADB enabled and authorized
 
 On macOS with Homebrew, install the missing device tools:
 
 ```bash
-brew install android-platform-tools scrcpy
+brew install android-platform-tools scrcpy tesseract
 ```
 
 Pull and start the local model:
 
 ```bash
-ollama pull gemma3:12b
+ollama pull qwen3.5:4b
 ollama serve
 ```
 
-If the computer cannot comfortably run the 12B model, change the model in a copied
-configuration file to a smaller vision-capable Ollama model.
+The planner runs with hidden model reasoning disabled for lower latency. You can change
+the model in `config.json` after benchmarking another vision-capable Ollama model.
 
 ## Set up the project
 
@@ -54,7 +59,7 @@ cp config.example.json config.json
 ivi-agent --config config.json doctor
 ```
 
-Run the dependency-free unit tests with:
+Run the unit tests with:
 
 ```bash
 python -m unittest discover -s tests -v
@@ -113,8 +118,9 @@ should also be encoded in controller-side policy before broader use.
 
 ## Current limitations
 
-- The first MVP asks the model for visual coordinates; OCR-grounded numbered controls
-  are the next reliability improvement.
+- Icon-only controls on custom-rendered surfaces still depend on the visual model.
+- Small local models can make poor navigation decisions even when output is grounded;
+  confidence thresholds and loop detection stop rather than guess.
 - ADB screenshot support for secondary IVI displays varies by Android build.
 - Bluetooth pairing needs a discoverable test phone and may require a human or a second
   automation channel to confirm the PIN on that phone.

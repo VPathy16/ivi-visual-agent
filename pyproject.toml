@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "A local, goal-driven visual agent for Android IVI testing"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["Pillow>=10.0"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"
@@ -19,4 +19,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-
