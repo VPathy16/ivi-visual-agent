@@ -851,11 +851,14 @@ class OllamaVisionModel:
                         action.target = match.label
                 if (
                     action.type in tap_like
-                    and use_visual_fallback
+                    and (use_visual_fallback or self.lenient)
                     and action.element_id is None
                     and (action.x is None or action.y is None)
                     and action.target
                 ):
+                    # In lenient mode, a named target that matched no accessibility
+                    # candidate is still located visually from the screenshot rather
+                    # than failing the step.
                     action.x, action.y, grounding_confidence = self._ground_visual_target(
                         image, action.target, reference_images
                     )
@@ -876,7 +879,9 @@ class OllamaVisionModel:
                     action.element_id = None
                     action.confidence = min(action.confidence, grounding_confidence)
                 self._validate_action_shape(
-                    action, candidate_ids, allow_visual_tap=use_visual_fallback
+                    action,
+                    candidate_ids,
+                    allow_visual_tap=use_visual_fallback or self.lenient,
                 )
                 if action.type in ({"input_text"} | tap_like) and action.element_id is not None:
                     selected = next(item for item in elements if item.id == action.element_id)

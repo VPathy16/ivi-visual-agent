@@ -296,6 +296,34 @@ class NamedTargetResolutionTests(unittest.TestCase):
         self.assertIsNotNone(action.y)
 
 
+class UngroundedNamedTargetModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)  # grid grounding
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        if schema is GROUNDING_SCHEMA:
+            return {"found": True, "cell": 5, "confidence": 0.9, "evidence": "x"}
+        return {"type": "tap", "target": "Wi-Fi", "confidence": 0.9, "reason": "tap wifi"}
+
+
+class LenientVisualGroundingTests(unittest.TestCase):
+    def test_named_target_not_a_candidate_is_visually_grounded(self) -> None:
+        # The only accessibility candidate is Bluetooth, so "Wi-Fi" cannot match a
+        # candidate; lenient mode must fall back to visual grounding.
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Bluetooth" class="android.widget.TextView" clickable="true" '
+            'bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = UngroundedNamedTargetModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertIsNone(action.element_id)
+        self.assertIsNotNone(action.x)
+        self.assertIsNotNone(action.y)
+
+
 class PointGroundingTests(unittest.TestCase):
     def test_point_mode_returns_normalized_coordinates(self) -> None:
         x, y, confidence = PointGroundingModel()._ground_visual_target(_blank_png(), "OK")
