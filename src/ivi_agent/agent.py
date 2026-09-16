@@ -327,6 +327,32 @@ class GoalAgent:
                 validate_action(action, self.config, goal)
                 signature = action_signature(action)
                 if signature in blocked_signatures and action.type != "wait":
+                    # Before changing strategy, check whether the OVERALL goal is
+                    # already satisfied. Fine-grained subgoals (e.g. "select a
+                    # program") may lack a clean completion signal, so the agent can
+                    # actually finish the goal while the subgoal tracker lags and
+                    # then loop. This catches that and stops cleanly.
+                    overall = self.model.verify(
+                        goal,
+                        image,
+                        ui_dump,
+                        knowledge_context=step_context,
+                        reference_images=step_references,
+                    )
+                    if (
+                        str(overall.get("outcome")) == "pass"
+                        and float(overall.get("confidence", 0.0))
+                        >= self.config.minimum_success_confidence
+                    ):
+                        evidence = str(overall.get("evidence", "Goal already satisfied"))
+                        for prior in result.subgoals:
+                            if prior.status != "passed":
+                                prior.status = "passed"
+                                prior.evidence = evidence
+                        result.outcome = "pass"
+                        result.reason = evidence
+                        self.progress("Overall goal already satisfied; finishing")
+                        break
                     history.append(
                         {
                             "blocked_repetition": repr(signature),

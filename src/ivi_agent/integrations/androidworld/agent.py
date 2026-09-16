@@ -160,6 +160,16 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
             validate_action(action, self.config, goal)
             signature = action_signature(action)
             if signature in blocked and action.type != "wait":
+                # The goal may already be satisfied while a fine-grained subgoal
+                # tracker lags; verify before looping.
+                done_check = self.model.verify(goal, image, ui_dump)
+                if (
+                    str(done_check.get("outcome")) == "pass"
+                    and float(done_check.get("confidence", 0.0))
+                    >= self.config.minimum_success_confidence
+                ):
+                    data["reason"] = str(done_check.get("evidence", "goal satisfied"))
+                    return self._done("complete", data)
                 self._history.append(
                     {
                         "blocked_repetition": repr(signature),
