@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#0E1116" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<title>Sample IVI</title>
+<style>
+  :root { color-scheme: dark; --bg:#0E1116; --card:#1C2530; --line:#2C3542;
+          --text:#F5F7FA; --muted:#93A1B5; --climate:#3AA0FF; --seat:#C77DFF; --veh:#43C7A6; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overflow:hidden; }
+  #app { height:100vh; display:flex; flex-direction:column; padding:20px 26px; }
+  .topbar { display:flex; align-items:center; justify-content:space-between;
+    border-bottom:2px solid var(--line); padding-bottom:12px; }
+  .title { font-size:30px; font-weight:700; }
+  .clock { color:var(--muted); font-size:16px; }
+  .back { background:var(--card); border:1px solid var(--line); color:var(--text);
+    border-radius:12px; padding:8px 16px; font-size:16px; }
+  .screen { flex:1; display:none; padding-top:22px; }
+  .screen.active { display:block; }
+  .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:22px; }
+  .tile { background:var(--card); border:2px solid var(--line); border-radius:22px;
+    padding:26px; min-height:200px; display:flex; flex-direction:column; justify-content:space-between; }
+  .tile .name { font-size:26px; font-weight:700; }
+  .tile .hint { color:var(--muted); font-size:16px; }
+  .icon { width:74px; height:74px; border-radius:18px; display:flex; align-items:center;
+    justify-content:center; font-weight:800; font-size:22px; }
+  .list .row { background:var(--card); border-radius:16px; padding:20px 22px; margin-bottom:14px;
+    font-size:22px; font-weight:600; }
+  .value { font-size:30px; font-weight:700; margin:10px 0 16px; }
+  .slider { position:relative; height:44px; background:var(--line); border-radius:22px; overflow:hidden; }
+  .slider .fill { position:absolute; left:0; top:0; bottom:0; border-radius:22px; }
+  .cards { display:flex; gap:18px; margin-bottom:22px; }
+  .card { flex:1; background:var(--card); border:2px solid var(--line); border-radius:18px;
+    padding:26px; text-align:center; font-size:22px; font-weight:700; }
+  .card.sel { border-color:var(--seat); background:#243244; }
+  .btn { display:inline-block; border:none; border-radius:16px; padding:18px 40px;
+    font-size:22px; font-weight:700; color:#fff; }
+  .status { margin-top:16px; font-size:20px; color:var(--muted); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:16px">
+      <button class="back" id="backBtn" style="visibility:hidden" onclick="go('home')">‹ Back</button>
+      <span class="title" id="screenTitle">Home</span>
+    </div>
+    <span class="clock">10:24 · Driver</span>
+  </div>
+
+  <!-- HOME -->
+  <section class="screen active" id="home">
+    <div class="grid">
+      <div class="tile" onclick="go('climate')">
+        <div class="icon" style="background:#12314d;color:var(--climate)">A/C</div>
+        <div><div class="name">Climate</div><div class="hint">Tap to open</div></div>
+      </div>
+      <div class="tile" onclick="go('seat')">
+        <div class="icon" style="background:#2a1f3d;color:var(--seat)">~M~</div>
+        <div><div class="name">Seat Comfort</div><div class="hint">Tap to open</div></div>
+      </div>
+      <div class="tile" onclick="go('vehicle')">
+        <div class="icon" style="background:#123a30;color:var(--veh)">VEH</div>
+        <div><div class="name">Vehicle</div><div class="hint">Tap to open</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- CLIMATE -->
+  <section class="screen" id="climate">
+    <div class="value">Driver&nbsp; <span id="tempVal">22.0</span>°C</div>
+    <div class="slider" id="tempSlider" onclick="setTemp(event)">
+      <div class="fill" id="tempFill" style="width:45%;background:var(--climate)"></div>
+    </div>
+    <div class="status">Tap along the bar to set temperature (full right = max 28°C)</div>
+    <div style="margin-top:26px;color:var(--muted);font-size:20px">Fan&nbsp;&nbsp;·&nbsp;&nbsp;Zones&nbsp;&nbsp;·&nbsp;&nbsp;Auto&nbsp;&nbsp;·&nbsp;&nbsp;A/C</div>
+  </section>
+
+  <!-- SEAT MASSAGE -->
+  <section class="screen" id="seat">
+    <div class="cards">
+      <div class="card" id="prog-wave" onclick="selectProgram('wave')">Wave</div>
+      <div class="card" id="prog-lumbar" onclick="selectProgram('lumbar')">Lumbar</div>
+      <div class="card" id="prog-shoulder" onclick="selectProgram('shoulder')">Shoulder</div>
+    </div>
+    <div style="font-weight:700;font-size:20px;margin-bottom:8px">Intensity</div>
+    <div class="slider" id="intSlider" onclick="setInt(event)">
+      <div class="fill" id="intFill" style="width:35%;background:var(--seat)"></div>
+    </div>
+    <div style="margin-top:26px">
+      <button class="btn" id="startBtn" style="background:var(--seat)" onclick="toggleMassage()">Start</button>
+      <span class="status" id="massageStatus">Idle — select a program and press Start</span>
+    </div>
+  </section>
+
+  <!-- VEHICLE SETTINGS -->
+  <section class="screen list" id="vehicle">
+    <div class="row">Driving modes</div>
+    <div class="row" onclick="go('seat')">Seat comfort ›</div>
+    <div class="row">Lighting</div>
+    <div class="row">Displays</div>
+  </section>
+</div>
+
+<script>
+  const TITLES = { home:"Home", climate:"Climate", seat:"Seat massage", vehicle:"Vehicle settings" };
+  function go(id){
+    document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    document.getElementById('screenTitle').textContent = TITLES[id];
+    document.getElementById('backBtn').style.visibility = id==='home' ? 'hidden' : 'visible';
+  }
+  function setTemp(e){
+    const bar=document.getElementById('tempSlider'), r=bar.getBoundingClientRect();
+    const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    document.getElementById('tempFill').style.width=(p*100)+'%';
+    document.getElementById('tempVal').textContent=(16+p*12).toFixed(1); // 16..28°C
+  }
+  function setInt(e){
+    const bar=document.getElementById('intSlider'), r=bar.getBoundingClientRect();
+    const p=Math.max(0,Math.min(1,(e.clientX-r.left)/r.width));
+    document.getElementById('intFill').style.width=(p*100)+'%';
+  }
+  let program=null, running=false;
+  function selectProgram(p){
+    program=p;
+    ['wave','lumbar','shoulder'].forEach(k=>document.getElementById('prog-'+k).classList.toggle('sel',k===p));
+    if(!running) document.getElementById('massageStatus').textContent='Selected '+p+' — press Start';
+  }
+  function toggleMassage(){
+    if(!program){ document.getElementById('massageStatus').textContent='Select a program first'; return; }
+    running=!running;
+    document.getElementById('startBtn').textContent=running?'Stop':'Start';
+    document.getElementById('massageStatus').textContent=running
+      ? ('Massage running: '+program) : ('Stopped — '+program+' selected');
+  }
+</script>
+</body>
+</html>

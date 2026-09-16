@@ -23,6 +23,7 @@ from ...agent import (
     action_signature,
     blocked_actions_for_state,
     remember_failed_action,
+    screen_made_progress,
     title_satisfies_navigation_goal,
 )
 from ...config import Config
@@ -159,6 +160,16 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
             validate_action(action, self.config, goal)
             signature = action_signature(action)
             if signature in blocked and action.type != "wait":
+                # The goal may already be satisfied while a fine-grained subgoal
+                # tracker lags; verify before looping.
+                done_check = self.model.verify(goal, image, ui_dump)
+                if (
+                    str(done_check.get("outcome")) == "pass"
+                    and float(done_check.get("confidence", 0.0))
+                    >= self.config.minimum_success_confidence
+                ):
+                    data["reason"] = str(done_check.get("evidence", "goal satisfied"))
+                    return self._done("complete", data)
                 self._history.append(
                     {
                         "blocked_repetition": repr(signature),
@@ -224,7 +235,10 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
 
         after_state = self.get_post_transition_state()
         after_hash = perceptual_hash(bridge.pixels_to_png(after_state.pixels))
-        changed = hash_distance(screen_hash, after_hash) > 4
+        after_ui = bridge.ui_elements_to_uiautomator_xml(
+            after_state.ui_elements, screen_size
+        )
+        changed = screen_made_progress(screen_hash, after_hash, ui_dump, after_ui)
         self._log(f"executed {action.type}; screen_changed={changed}")
         self._history.append(
             {

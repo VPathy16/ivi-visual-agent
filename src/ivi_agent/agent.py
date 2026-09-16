@@ -22,6 +22,25 @@ from .report import write_report
 from .types import RunResult, StepRecord, SubgoalRecord
 
 
+def screen_made_progress(
+    before_hash: int,
+    after_hash: int,
+    before_ui: str,
+    after_ui: str,
+    maximum_distance: int = 4,
+) -> bool:
+    """True if the screen changed visibly OR in its UI text.
+
+    The perceptual hash misses small-but-meaningful changes -- a toggle flipping,
+    a list item becoming selected, a "running" status appearing -- so a change in
+    the visible UI text also counts as progress. This prevents the agent from
+    treating a successful state change as a no-op and looping on it.
+    """
+    if hash_distance(before_hash, after_hash) > maximum_distance:
+        return True
+    return set(extract_visible_text(before_ui)) != set(extract_visible_text(after_ui))
+
+
 def action_signature(action: object) -> tuple[object, ...]:
     action_type = getattr(action, "type", None)
     target = " ".join(
@@ -308,6 +327,32 @@ class GoalAgent:
                 validate_action(action, self.config, goal)
                 signature = action_signature(action)
                 if signature in blocked_signatures and action.type != "wait":
+                    # Before changing strategy, check whether the OVERALL goal is
+                    # already satisfied. Fine-grained subgoals (e.g. "select a
+                    # program") may lack a clean completion signal, so the agent can
+                    # actually finish the goal while the subgoal tracker lags and
+                    # then loop. This catches that and stops cleanly.
+                    overall = self.model.verify(
+                        goal,
+                        image,
+                        ui_dump,
+                        knowledge_context=step_context,
+                        reference_images=step_references,
+                    )
+                    if (
+                        str(overall.get("outcome")) == "pass"
+                        and float(overall.get("confidence", 0.0))
+                        >= self.config.minimum_success_confidence
+                    ):
+                        evidence = str(overall.get("evidence", "Goal already satisfied"))
+                        for prior in result.subgoals:
+                            if prior.status != "passed":
+                                prior.status = "passed"
+                                prior.evidence = evidence
+                        result.outcome = "pass"
+                        result.reason = evidence
+                        self.progress("Overall goal already satisfied; finishing")
+                        break
                     history.append(
                         {
                             "blocked_repetition": repr(signature),
@@ -423,7 +468,11 @@ class GoalAgent:
                 check_path = directory / f"step-{number:02d}-after.png"
                 after_image = self.device.capture(check_path)
                 after = perceptual_hash(after_image)
-                step.screen_changed = hash_distance(before, after) > 4
+                try:
+                    after_ui = self.device.ui_dump()
+                except Exception:
+                    after_ui = ""
+                step.screen_changed = screen_made_progress(before, after, ui_dump, after_ui)
                 history.append(
                     {
                         "step": number,

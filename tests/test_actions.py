@@ -71,6 +71,28 @@ class ExpandedPolicyTests(unittest.TestCase):
             )
 
 
+class FakeScreencapDevice(AdbDevice):
+    def __init__(self, png: bytes) -> None:
+        super().__init__(serial="emulator-5554")
+        self._png = png
+
+    def _run(self, *args, binary=False, timeout=20):  # type: ignore[override]
+        if args[:1] == ("exec-out",) and "screencap" in args:
+            return self._png
+        if args[:2] == ("shell", "wm"):
+            return "Physical size: 1080x2400\n"
+        return b"" if binary else ""
+
+
+class ScreenSizeTests(unittest.TestCase):
+    def test_screen_size_uses_current_framebuffer_not_wm_size(self) -> None:
+        buf = io.BytesIO()
+        Image.new("RGB", (2400, 1080), "black").save(buf, format="PNG")
+        device = FakeScreencapDevice(buf.getvalue())
+        # Landscape framebuffer, NOT the transposed 1080x2400 that `wm size` reports.
+        self.assertEqual(device.screen_size(), (2400, 1080))
+
+
 class AdbExecutionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.device = RecordingDevice()

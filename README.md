@@ -645,6 +645,38 @@ ivi-agent --config config.json run --serial IVI_SERIAL --display-id DISPLAY_ID \
     --knowledge-profile benz --goal "Set the driver temperature to maximum"
 ```
 
+### 4. Reproduce the whole loop locally (no vehicle needed)
+
+You don't need a head unit to see the custom-IVI path work end to end. A tiny
+brand-styled IVI ships in [`examples/benz-mbux-manual/testapp/`](examples/benz-mbux-manual/testapp/):
+a single [`ivi.html`](examples/benz-mbux-manual/testapp/ivi.html) mock (Home →
+Climate / Seat / Vehicle, a temperature slider, and seat-massage programs with a
+live "Massage running: &lt;program&gt;" status line) whose screen names match the
+`benz` manual profile.
+
+Wrap it in the bundled native `WebView` app
+([`testapp/android/`](examples/benz-mbux-manual/testapp/android/)) — **not** a
+browser, because Chrome drops synthetic `adb` taps on web content — install it on
+any Android emulator, and drive it with the same command as a real unit:
+
+```bash
+# Build + install the native WebView wrapper (see testapp/android/README.md)
+adb install -r ivi-sample.apk
+adb shell am start -n com.example.iviwv/.MainActivity
+
+ivi-agent --config config.json run --serial EMULATOR_SERIAL --display-id 0 \
+    --knowledge-profile benz --goal "Open the climate screen"
+ivi-agent --config config.json run --serial EMULATOR_SERIAL --display-id 0 \
+    --knowledge-profile benz --goal "Start the seat massage"
+```
+
+With local `qwen3-vl:8b` both goals pass, guided only by the PDF-derived `benz`
+knowledge profile — no fixed coordinates. The three screens the agent drives:
+
+| Home | Climate | Seat massage (running) |
+| --- | --- | --- |
+| ![Sample IVI home screen](docs/screenshots/ivi-home.png) | ![Sample IVI climate screen](docs/screenshots/ivi-climate.png) | ![Sample IVI seat-massage screen running](docs/screenshots/ivi-seat-massage.png) |
+
 Notes specific to OEM units:
 
 - **`open_app` won't resolve custom apps.** Vehicle settings / climate are not the

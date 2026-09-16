@@ -62,6 +62,23 @@ class AdbDevice:
         time.sleep(0.5)
 
     def screen_size(self) -> tuple[int, int]:
+        # Use the CURRENT framebuffer dimensions (from a screenshot) so tap
+        # coordinates match the live orientation. `wm size` reports the physical,
+        # unrotated size (e.g. 1080x2400), which is transposed in landscape and
+        # makes normalized taps miss on rotated IVI/Automotive displays.
+        try:
+            image = self._run("exec-out", "screencap", "-p", binary=True, timeout=30)
+            if (
+                isinstance(image, bytes)
+                and image[:8] == b"\x89PNG\r\n\x1a\n"
+                and len(image) >= 24
+            ):
+                width = int.from_bytes(image[16:20], "big")
+                height = int.from_bytes(image[20:24], "big")
+                if width > 0 and height > 0:
+                    return width, height
+        except AdbError:
+            pass
         output = str(self._run("shell", "wm", "size"))
         matches = re.findall(r"(\d+)x(\d+)", output)
         if not matches:
