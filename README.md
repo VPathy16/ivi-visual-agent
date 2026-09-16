@@ -530,6 +530,34 @@ ollama pull nomic-embed-text     # needs Ollama running with the model pulled
   manual icons (`KnowledgeBase.match_icon`); needs the optional extra
   `pip install -e '.[clip]'` and degrades gracefully when unavailable.
 
+### OpenCV fast-path (optional, speeds up runs)
+
+The per-step vision-model call is the slow part of a run. When the retriever has
+already surfaced a manual **icon** for the current subgoal, OpenCV can often
+locate that icon on the live screen in milliseconds — so the agent taps it
+directly and skips the model call for that step.
+
+```json
+{
+  "cv_fast_path": true,
+  "cv_match_threshold": 0.75,
+  "cv_min_retrieval_score": 2.0
+}
+```
+
+```bash
+pip install -e '.[cv]'   # opencv-python-headless
+```
+
+- It fires only when the retriever ranked the icon at or above
+  `cv_min_retrieval_score` (the "keyword/semantic matched this icon" gate) **and**
+  a multi-scale template match clears `cv_match_threshold`; otherwise the normal
+  model path runs — so a wrong or weak match never taps.
+- Keep `cv_match_threshold` ≥ `minimum_action_confidence`, since the matched tap
+  is still subject to the safety policy (protected regions, confidence floor).
+- Needs a knowledge profile whose icons have crops. Without the `[cv]` extra it
+  is a no-op and the agent behaves exactly as before.
+
 Coordinates in `protected_regions` are normalized rectangles in the form
 `[left, top, right, bottom]`. This prevents taps in the upper-right corner:
 

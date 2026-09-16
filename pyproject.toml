@@ -20,6 +20,9 @@ embeddings = ["fastembed>=0.3"]
 # local Ollama embedding model over HTTP with the stdlib).
 # Optional CLIP backend for matching a live icon crop against manual icons.
 clip = ["open-clip-torch>=2.20", "torch>=2.0"]
+# OpenCV fast-path: template-match a retrieved manual icon on the live screen to
+# tap it directly, skipping the slow model call when the match is confident.
+cv = ["opencv-python-headless>=4.8", "numpy>=1.24"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"

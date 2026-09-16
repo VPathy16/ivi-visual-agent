@@ -61,6 +61,17 @@ class Config:
     embedding_model: str = "nomic-embed-text"
     icon_matching: bool = False
     clip_model: str = "ViT-B-32"
+    # OpenCV fast-path. When enabled, before calling the (slow) vision model on a
+    # step, the agent tries to locate a keyword/semantic-matched manual icon on
+    # the live screen with template matching and taps it directly, skipping the
+    # model call. It only fires when the retriever ranked the icon at or above
+    # cv_min_retrieval_score AND the template match clears cv_match_threshold;
+    # otherwise the normal model path runs. Needs the '[cv]' extra and a knowledge
+    # profile whose icons have crops. cv_match_threshold should stay >=
+    # minimum_action_confidence so a matched tap also passes the safety policy.
+    cv_fast_path: bool = False
+    cv_match_threshold: float = 0.75
+    cv_min_retrieval_score: float = 2.0
 
     def __post_init__(self) -> None:
         if self.protected_regions is None:

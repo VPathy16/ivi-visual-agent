@@ -20,6 +20,7 @@ from .perception import (
 from .policy import PolicyViolation, validate_action
 from .report import write_report
 from .types import RunResult, StepRecord, SubgoalRecord
+from .vision_match import cv_ground_from_knowledge
 
 
 def screen_made_progress(
@@ -313,18 +314,39 @@ class GoalAgent:
                     f"{current_subgoal.number}/{len(result.subgoals)}"
                 )
                 decision_started = time.monotonic()
-                action = self.model.plan(
-                    goal,
-                    image,
-                    ui_dump,
-                    history,
-                    current_subgoal=current_subgoal.description,
-                    blocked_actions=[repr(item) for item in sorted(blocked_signatures, key=repr)],
-                    knowledge_context=step_context,
-                    reference_images=step_references,
-                )
+                # Fast path: if the retriever matched a manual icon for this
+                # subgoal and OpenCV can locate that icon on screen, tap it
+                # directly and skip the slow model call. Falls through to the
+                # model whenever the match is weak, blocked, or policy-rejected.
+                action = None
+                if self.config.cv_fast_path and step_knowledge:
+                    candidate = cv_ground_from_knowledge(
+                        image, step_knowledge, self.config
+                    )
+                    if candidate is not None and action_signature(candidate) not in blocked_signatures:
+                        try:
+                            validate_action(candidate, self.config, goal)
+                            action = candidate
+                            self.progress(
+                                f"Step {number}: cv2 fast-path grounded "
+                                f"'{candidate.target}' (score {candidate.confidence:.2f}); "
+                                "skipping model"
+                            )
+                        except PolicyViolation:
+                            action = None
+                if action is None:
+                    action = self.model.plan(
+                        goal,
+                        image,
+                        ui_dump,
+                        history,
+                        current_subgoal=current_subgoal.description,
+                        blocked_actions=[repr(item) for item in sorted(blocked_signatures, key=repr)],
+                        knowledge_context=step_context,
+                        reference_images=step_references,
+                    )
+                    validate_action(action, self.config, goal)
                 decision_seconds = time.monotonic() - decision_started
-                validate_action(action, self.config, goal)
                 signature = action_signature(action)
                 if signature in blocked_signatures and action.type != "wait":
                     # Before changing strategy, check whether the OVERALL goal is
