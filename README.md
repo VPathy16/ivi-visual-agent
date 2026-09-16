@@ -482,17 +482,152 @@ action still passes the safety policy above before execution.
 The agent can be scored on Google's
 [AndroidWorld](https://github.com/google-research/android_world) benchmark via an
 adapter that keeps the local planner/grounder/verifier and only translates to
-AndroidWorld's environment interface. It needs an emulator with hardware
-acceleration (KVM or Apple Silicon). See
+AndroidWorld's environment interface (screenshot → PNG, UI forest → uiautomator
+XML, `Action` → `JSONAction`). AndroidWorld computes task reward independently;
+the agent only decides actions and signals done. See the integration README:
 [`src/ivi_agent/integrations/androidworld/README.md`](src/ivi_agent/integrations/androidworld/README.md).
 
+### Results
+
+Local **`qwen3-vl:8b-instruct`** via Ollama, on an Android 13 (arm64) emulator on
+an Apple Silicon Mac — **fully offline, no cloud API**:
+
+| Task | Result |
+| --- | --- |
+| SystemWifiTurnOn | ✅ PASS |
+| SystemWifiTurnOff | ✅ PASS |
+| ContactsAddContact | ✅ PASS |
+| ClockStopWatchRunning | ✅ PASS |
+| SystemBrightnessMax | ❌ FAIL (slider — see below) |
+| SystemBrightnessMin | ❌ FAIL (slider — see below) |
+
+**4 / 6 (67%) on this built-in-app subset.** Published **cloud**-VLM agents (GPT-4o /
+Gemini class) report roughly **50–60% on the full 116-task AndroidWorld suite**, so a
+small *local* model landing in that band on the tasks it can run is a strong result
+for an offline setup. Two honest caveats:
+
+- This is a **built-in-app subset**, not the full 116 tasks. It is not directly
+  comparable to a full-suite number; treat it as an offline capability check.
+- The full suite needs an **x86_64 emulator on Linux/KVM** (many AndroidWorld task
+  apps are x86-only and don't install/run on Apple-Silicon arm64). The same
+  `run_benchmark` command runs there.
+- The two brightness FAILs are the **slider** class: AndroidWorld's `JSONAction`
+  has no precise coordinate drag, so exactly setting a seek bar is unreliable.
+  Navigation to the Display screen itself works.
+
+### Setup and run
+
 ```bash
+# 1. Install the agent + AndroidWorld (use Python 3.11/3.12; 3.13+ lacks wheels)
 pip install -e .
 pip install git+https://github.com/google-research/android_world.git
 
+# 2. Local grounding model (Ollama >= 0.12.7)
+ollama pull qwen3-vl:8b-instruct     # or qwen3-vl:4b-instruct for ~2x speed
+cp config.example.json config.json   # already set to qwen3-vl + point grounding
+
+# 3. Create the AVD AndroidWorld expects and launch it with -grpc 8554
+#    Apple Silicon: use an arm64 image; Linux/KVM: use x86_64 for the full suite.
+avdmanager create avd --name AndroidWorldAvd \
+    --package "system-images;android-33;google_apis;arm64-v8a" --device pixel_6 --force
+emulator -avd AndroidWorldAvd -no-snapshot -grpc 8554        # leave running
+
+# 4. Run (pass --adb-path if your SDK isn't at ~/Android/Sdk)
 python -m ivi_agent.integrations.androidworld.run_benchmark \
-    --config config.json --console-port 5554 --n-tasks 20
+    --config config.json --console-port 5554 \
+    --adb-path "$ANDROID_HOME/platform-tools/adb" \
+    --task SystemWifiTurnOn
+#   Batch: --n-tasks 20 --seed 0   |   first run only: --emulator-setup
 ```
+
+The runner prints per-task PASS/FAIL and a JSON summary with the success rate.
+Speed knobs live in `config.json`: `model` (4b vs 8b), `max_image_dimension`,
+`model_context_tokens`, and `grounding_mode` (`point` needs a Qwen3-VL-class model;
+`grid` works with any small VLM).
+
+## Custom OEM IVI (Benz-style) bench bring-up
+
+Running against a real, brand-specific head unit (custom home screen, vehicle
+settings, climate, seat-massage screens) is the intended use case. Those screens
+are often custom-rendered (no accessibility tree) and use proprietary icons, so
+the agent leans on visual grounding **plus a manual/knowledge profile** built from
+the OEM's documentation.
+
+> ⚠️ **Safety first.** Climate and seat-massage screens drive real actuators.
+> Bench-test on a **stationary** unit only. Never run on a moving or production
+> vehicle without an appropriate safety review.
+
+### 0. Prerequisites
+
+- The head unit must be **Android / Android Automotive (AAOS)** with **Developer
+  options + ADB** enabled and the host authorized (`adb devices` shows it). QNX or
+  ADB-locked units cannot be driven by this tool.
+- Identify the central display id if the unit has several screens:
+  ```bash
+  adb -s IVI_SERIAL shell dumpsys SurfaceFlinger --display-id
+  ```
+
+### 1. Build a knowledge profile from the OEM manual
+
+Proprietary icons (climate zones, seat massage, drive modes) are the main
+recognition risk. Give the agent an icon/step reference it can retrieve:
+
+```bash
+pip install -e '.[docs]'          # reportlab + pypdf
+brew install poppler              # pdftoppm, required to index the PDF
+
+cp -R examples/custom-ivi-manual examples/benz-mbux
+# Replace examples/benz-mbux/images/ with real Benz screen + icon crops.
+# Edit examples/benz-mbux/manual.json: for each icon give a clear `meaning` and
+# rich `synonyms` (e.g. "seat massage", "lumbar", "comfort"); describe each screen
+# (home, vehicle settings, climate, seat massage) and the task steps.
+
+ivi-agent manual build --source examples/benz-mbux --output output/pdf/benz.pdf
+ivi-agent knowledge index output/pdf/benz.pdf --profile benz
+ivi-agent knowledge query --profile benz --goal "Start the seat massage"   # sanity check
+```
+
+The retriever is keyword/synonym based, so the quality of `meaning`/`synonyms` in
+`manual.json` directly drives recognition of proprietary controls.
+
+### 2. Configure for a vehicle bench
+
+In `config.json`:
+
+- `"model": "qwen3-vl:8b-instruct"` and `"grounding_mode": "point"` — needed for the
+  pixel-only climate/massage screens that expose no accessibility nodes.
+- `"knowledge_profile": "benz"` — use the profile on every run (or pass
+  `--knowledge-profile benz`).
+- `"allow_text_input": false` — for trials that must never type.
+- `"protected_regions": [[l, t, r, b], ...]` — normalized rectangles the agent must
+  never tap (hazards, drive-mode, anything safety-relevant).
+
+### 3. Dry run, then closed loop (always pass `--display-id`)
+
+```bash
+# Preview
+ivi-agent scrcpy --serial IVI_SERIAL
+
+# Propose the first action without executing it
+ivi-agent --config config.json run --serial IVI_SERIAL --display-id DISPLAY_ID \
+    --knowledge-profile benz --goal "Open the climate screen" --dry-run
+
+# Closed loop
+ivi-agent --config config.json run --serial IVI_SERIAL --display-id DISPLAY_ID \
+    --knowledge-profile benz --goal "Set the driver temperature to maximum"
+```
+
+Notes specific to OEM units:
+
+- **`open_app` won't resolve custom apps.** Vehicle settings / climate are not the
+  standard Settings package, so the agent navigates them **visually** (tap tiles,
+  scroll) rather than by app name.
+- **Sliders work here** (unlike the AndroidWorld bridge): on a real device the agent
+  issues a real `adb input swipe x1 y1 x2 y2`, so climate temperature and
+  massage-intensity sliders are genuinely draggable.
+- **Verify real state, not just pixels.** Visual verification proves the displayed
+  UI, not the actuator. For real QA, also assert the vehicle signal
+  (`adb shell dumpsys car_service`, VHAL properties, or CAN) as ground truth.
 
 ## Run evidence
 
