@@ -172,9 +172,12 @@ maximum or minimum), return type swipe with x,y at the slider thumb and x2,y2 at
 target end of the track. Do not tap a scrollable list to move it; use a gesture. Use keyboard_enter to submit text already typed into a focused field. Use
 open_app with app_name only to launch a named application directly instead of hunting
 through a launcher; never invent a package name. When the goal concerns a system
-setting (for example Wi-Fi, Bluetooth, brightness, sound, or notifications) and no
-relevant control is visible on the current screen, prefer open_app with app_name
-"Settings" rather than tapping status-bar icons, clocks, or home-screen widgets.
+setting (for example Wi-Fi, Bluetooth, brightness, sound, or notifications) and the
+Settings app is NOT already open, prefer open_app with app_name "Settings" rather than
+tapping status-bar icons, clocks, or home-screen widgets. Never open_app an app that is
+already the active screen: once Settings is open, tap the relevant category (for
+example Display for brightness), and if that category is not currently visible, SCROLL
+with a gesture (reveal_below) to find it instead of re-opening Settings.
 A finish action requires an outcome.
 Never guess an invisible control, delete data, place calls, purchase, reset, update
 software, or accept surprising permissions. Keep reason under 20 words. Return only
