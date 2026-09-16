@@ -13,6 +13,33 @@ grid when a custom IVI surface exposes only pixels.
 > This is an early bench-testing MVP. Do not operate it in a moving vehicle or connect it
 > to a production vehicle without an appropriate safety review.
 
+## Highlights
+
+- 🚗 **Custom OEM IVI, driven end to end — fully local.** On a brand-styled IVI
+  (custom Home / Climate / Vehicle-settings / Seat-massage screens, proprietary
+  icons, no accessibility tree), local **`qwen3-vl:8b`** completes both
+  **"Open the climate screen"** and **"Start the seat massage"**, guided only by a
+  PDF-derived knowledge profile — **no fixed tap coordinates**. Ships as a runnable
+  demo (native WebView app + manual scaffold) you can reproduce without a vehicle.
+
+  | Home | Climate | Seat massage (running) |
+  | --- | --- | --- |
+  | ![Sample IVI home screen](docs/screenshots/ivi-home.png) | ![Sample IVI climate screen](docs/screenshots/ivi-climate.png) | ![Sample IVI seat-massage screen running](docs/screenshots/ivi-seat-massage.png) |
+
+  See [Custom OEM IVI (Benz-style) bench bring-up](#custom-oem-ivi-benz-style-bench-bring-up).
+
+- 📊 **AndroidWorld: 4 / 6 (67%) on the built-in-app subset, fully offline.** A
+  small *local* model on Google's [AndroidWorld](https://github.com/google-research/android_world)
+  benchmark — for reference, published *cloud* VLM agents (GPT-4o / Gemini class)
+  report roughly **50–60% on the full 116-task suite**. See
+  [AndroidWorld benchmark](#androidworld-benchmark) for the per-task table and
+  honest caveats.
+
+- 🧠 **Manual-driven, no training.** A local multimodal RAG profile (semantic text
+  embeddings + optional CLIP icon matching) turns an owner's manual into the
+  recognition reference for proprietary controls — see
+  [Semantic retrieval](#semantic-retrieval-optional).
+
 ## Tested emulator screens
 
 These are direct screenshots from the Android 15 Automotive ARM64 emulator used during
