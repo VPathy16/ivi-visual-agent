@@ -23,6 +23,7 @@ from ...agent import (
     action_signature,
     blocked_actions_for_state,
     remember_failed_action,
+    screen_made_progress,
     title_satisfies_navigation_goal,
 )
 from ...config import Config
@@ -224,7 +225,10 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
 
         after_state = self.get_post_transition_state()
         after_hash = perceptual_hash(bridge.pixels_to_png(after_state.pixels))
-        changed = hash_distance(screen_hash, after_hash) > 4
+        after_ui = bridge.ui_elements_to_uiautomator_xml(
+            after_state.ui_elements, screen_size
+        )
+        changed = screen_made_progress(screen_hash, after_hash, ui_dump, after_ui)
         self._log(f"executed {action.type}; screen_changed={changed}")
         self._history.append(
             {
