@@ -1,0 +1,9 @@
+{
+  "name": "Sample IVI",
+  "short_name": "IVI",
+  "start_url": "ivi.html",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0E1116",
+  "theme_color": "#0E1116"
+}

@@ -32,9 +32,22 @@ adb -s emulator-5554 shell am start -a android.intent.action.VIEW \
     -d "file:///sdcard/Download/ivi.html" -t "text/html"
 ```
 
-Chrome's address bar is harmless (the agent ignores it). For a cleaner, truly
-fullscreen surface, use Chrome menu → **Add to Home screen** and launch it, or
-enable immersive mode.
+**Use a clean fullscreen surface** (recommended). Chrome's address bar and its
+own accessibility nodes can shift/confuse grounding. Serve over HTTP and install
+the page as a fullscreen web app:
+
+```bash
+# host: serve the folder (bind IPv4 so the emulator's 10.0.2.2 can reach it)
+cd examples/benz-mbux-manual/testapp && python3 -m http.server 8000 --bind 0.0.0.0
+```
+
+On the emulator, open Chrome to `http://10.0.2.2:8000/ivi.html`, then
+**⋮ menu → Add to Home screen** and launch that icon. The `manifest.json` makes it
+open **fullscreen, landscape**, with no address bar — so the captured frame is the
+IVI itself and taps map 1:1.
+
+Also set the emulator to landscape (rotate via the emulator toolbar, or
+`adb shell settings put system user_rotation 1`) so the layout matches.
 
 ## 3. Run the agent against it (with the manual)
 
