@@ -35,6 +35,7 @@ ACTION_SCHEMA: dict[str, Any] = {
                 "input_text",
                 "keyboard_enter",
                 "gesture",
+                "swipe",
                 "open_app",
                 "back",
                 "home",
@@ -166,7 +167,9 @@ Direction names the content the gesture should reveal, not finger motion. Do not
 what a gesture opens on this device.
 Use long_press to open a context menu on a visible item, and double_tap only when a
 single tap is clearly insufficient; both ground exactly like tap (element_id or visual
-target). Use keyboard_enter to submit text already typed into a focused field. Use
+target). To drag a slider or seek bar (for example to set brightness or volume to its
+maximum or minimum), return type swipe with x,y at the slider thumb and x2,y2 at the
+target end of the track. Do not tap a scrollable list to move it; use a gesture. Use keyboard_enter to submit text already typed into a focused field. Use
 open_app with app_name only to launch a named application directly instead of hunting
 through a launcher; never invent a package name. When the goal concerns a system
 setting (for example Wi-Fi, Bluetooth, brightness, sound, or notifications) and no
@@ -813,6 +816,7 @@ class OllamaVisionModel:
                     "input_text",
                     "keyboard_enter",
                     "gesture",
+                    "swipe",
                     "open_app",
                     "back",
                     "home",
@@ -882,6 +886,21 @@ class OllamaVisionModel:
                 )
                 if action.type in ({"input_text"} | tap_like) and action.element_id is not None:
                     selected = next(item for item in elements if item.id == action.element_id)
+                    if action.type in tap_like and selected.scrollable:
+                        # The model tapped a scroll container -- it means to scroll,
+                        # not tap. Tapping the middle of a list opens whatever row is
+                        # there (the brightness runs looped on this). Convert to a
+                        # scroll gesture so list navigation actually advances.
+                        upward = re.search(
+                            r"\b(up|back|previous|top|above)\b", action.reason.lower()
+                        )
+                        return Action(
+                            type="gesture",
+                            direction="reveal_above" if upward else "reveal_below",
+                            region="center",
+                            confidence=max(action.confidence, 0.8),
+                            reason=action.reason or "Scroll the list to reveal more",
+                        )
                     declared_target = " ".join(
                         re.findall(r"[a-z0-9]+", action.target.lower())
                     )

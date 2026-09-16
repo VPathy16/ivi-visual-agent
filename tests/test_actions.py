@@ -152,7 +152,7 @@ class NumCtxPayloadTests(unittest.TestCase):
 class ModelSchemaTests(unittest.TestCase):
     def test_action_schema_includes_new_types(self) -> None:
         enum = set(ACTION_SCHEMA["properties"]["type"]["enum"])
-        for kind in ("long_press", "double_tap", "keyboard_enter", "open_app"):
+        for kind in ("long_press", "double_tap", "keyboard_enter", "open_app", "swipe"):
             self.assertIn(kind, enum)
 
     def test_grounding_mode_validation(self) -> None:
@@ -363,6 +363,36 @@ class StateChangeVerifyTests(unittest.TestCase):
     def test_strict_verify_downgrades_when_terms_not_on_screen(self) -> None:
         result = _VerifyPassModel(lenient=False).verify("Turn wifi on", _blank_png(), "")
         self.assertEqual(result["outcome"], "inconclusive")
+
+
+class ScrollTapModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        return {
+            "type": "tap",
+            "target": "main content",
+            "confidence": 0.8,
+            "reason": "scroll down to find Display",
+        }
+
+
+class ScrollTapConversionTests(unittest.TestCase):
+    def test_tap_on_scrollable_container_becomes_scroll_gesture(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][1000,2000]">'
+            '<node content-desc="main content" '
+            'class="androidx.recyclerview.widget.RecyclerView" scrollable="true" '
+            'clickable="true" bounds="[0,100][1000,1900]"/>'
+            "</node></hierarchy>"
+        )
+        action = ScrollTapModel().plan(
+            "Turn brightness to the max value", _blank_png(), ui, []
+        )
+        self.assertEqual(action.type, "gesture")
+        self.assertEqual(action.direction, "reveal_below")
 
 
 class PointGroundingTests(unittest.TestCase):

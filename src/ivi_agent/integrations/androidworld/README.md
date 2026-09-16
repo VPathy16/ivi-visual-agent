@@ -58,7 +58,16 @@ lazily so those tests run without the benchmark installed.
   always AndroidWorld's `task.is_successful`.
 - A small local model will score low. Use `qwen3-vl:8b-instruct` or larger and
   `grounding_mode: "point"` for a meaningful number.
-- This adapter is verified for import, construction, and translation logic, but
-  has **not** been run end-to-end against a live emulator here (this development
-  environment has no KVM/emulator). Expect to tune `transition_pause`,
-  `max_actions`, and confidence thresholds on first real runs.
+- This adapter is verified for import, construction, and translation logic, and
+  has been run end-to-end on an Android 13 (arm64) emulator with
+  `qwen3-vl:8b-instruct`, passing built-in-app tasks (Wi-Fi on/off, contacts,
+  clock). Expect to tune `transition_pause`, `max_actions`, and confidence
+  thresholds for your device/model.
+- **Sliders/brightness are a known limitation.** AndroidWorld's `JSONAction`
+  exposes no precise coordinate drag (its `swipe`/`scroll` are coarse and
+  directional), so exactly setting a seek bar to max/min is unreliable through
+  the bridge. The planner can emit `swipe`, but it maps to a whole-screen
+  directional swipe, not a thumb drag.
+- **Third-party task apps do not install/run on arm64.** For the full 116-task
+  suite use an x86_64 emulator on a Linux/KVM host; the built-in-app tasks
+  (Settings/Contacts/Clock) run fine on Apple Silicon arm64.
