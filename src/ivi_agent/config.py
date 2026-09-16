@@ -41,6 +41,15 @@ class Config:
     knowledge_root: str = "knowledge"
     knowledge_profile: str | None = None
     knowledge_top_k: int = 4
+    # Semantic retrieval. When enabled, the manual/RAG retriever blends a local
+    # Ollama text-embedding score with keyword matching (better paraphrase and
+    # proprietary-icon recall); it falls back to keyword-only when the embedding
+    # model is unreachable. icon_matching adds optional CLIP image matching of a
+    # live icon crop against the manual icons (needs the '[clip]' extra).
+    use_embeddings: bool = False
+    embedding_model: str = "nomic-embed-text"
+    icon_matching: bool = False
+    clip_model: str = "ViT-B-32"
 
     def __post_init__(self) -> None:
         if self.protected_regions is None:

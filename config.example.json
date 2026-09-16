@@ -17,5 +17,9 @@
   "protected_regions": [],
   "knowledge_root": "knowledge",
   "knowledge_profile": null,
-  "knowledge_top_k": 4
+  "knowledge_top_k": 4,
+  "use_embeddings": false,
+  "embedding_model": "nomic-embed-text",
+  "icon_matching": false,
+  "clip_model": "ViT-B-32"
 }

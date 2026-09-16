@@ -132,7 +132,60 @@ def _structured_chunks(manual: dict[str, Any], assets: Path) -> list[dict[str, A
     return chunks
 
 
-def index_pdf(pdf: Path, knowledge_root: Path, profile: str) -> dict[str, Any]:
+def _embed_chunks(
+    chunks: list[dict[str, Any]],
+    assets_root: Path,
+    text_embedder: Any | None,
+    image_embedder: Any | None,
+) -> dict[str, bool]:
+    """Attach text (and icon image) embeddings to chunks in place.
+
+    Best-effort: any backend failure leaves the chunks keyword-only so indexing
+    still succeeds. Returns which embedding kinds were written.
+    """
+    written = {"text": False, "image": False}
+    if text_embedder is not None:
+        try:
+            texts = [str(chunk.get("text", "")) for chunk in chunks]
+            vectors = text_embedder.embed(texts)
+            for chunk, vector in zip(chunks, vectors):
+                if vector:
+                    chunk["embedding"] = vector
+            written["text"] = True
+        except Exception:  # noqa: BLE001 - keep keyword index on failure
+            pass
+    if image_embedder is not None:
+        icon_chunks = [
+            chunk
+            for chunk in chunks
+            if chunk.get("kind") == "icon" and isinstance(chunk.get("image"), str)
+        ]
+        try:
+            images: list[bytes] = []
+            usable: list[dict[str, Any]] = []
+            for chunk in icon_chunks:
+                path = (assets_root / chunk["image"]).resolve()
+                if path.is_file():
+                    images.append(path.read_bytes())
+                    usable.append(chunk)
+            if images:
+                vectors = image_embedder.embed_images(images)
+                for chunk, vector in zip(usable, vectors):
+                    if vector:
+                        chunk["image_embedding"] = vector
+                written["image"] = True
+        except Exception:  # noqa: BLE001 - keep keyword index on failure
+            pass
+    return written
+
+
+def index_pdf(
+    pdf: Path,
+    knowledge_root: Path,
+    profile: str,
+    text_embedder: Any | None = None,
+    image_embedder: Any | None = None,
+) -> dict[str, Any]:
     try:
         from pypdf import PdfReader
     except ImportError as exc:
@@ -220,6 +273,8 @@ def index_pdf(pdf: Path, knowledge_root: Path, profile: str) -> dict[str, Any]:
                 manual_id = str(metadata.get("id", manual_id))
                 manual_title = str(metadata.get("title", manual_title))
 
+        embedded = _embed_chunks(chunks, temporary, text_embedder, image_embedder)
+
         chunks_path = temporary / "chunks.jsonl"
         chunks_path.write_text(
             "".join(json.dumps(chunk, ensure_ascii=False) + "\n" for chunk in chunks),
@@ -236,6 +291,8 @@ def index_pdf(pdf: Path, knowledge_root: Path, profile: str) -> dict[str, Any]:
             "pages": len(reader.pages),
             "chunks": len(chunks),
             "structured_manual": embedded_manifest is not None,
+            "text_embeddings": embedded["text"],
+            "icon_image_embeddings": embedded["image"],
         }
         (temporary / "manifest.json").write_text(
             json.dumps(manifest, indent=2), encoding="utf-8"
@@ -248,8 +305,15 @@ def index_pdf(pdf: Path, knowledge_root: Path, profile: str) -> dict[str, Any]:
 
 
 class KnowledgeBase:
-    def __init__(self, directory: Path) -> None:
+    # Weight of the semantic (cosine) component when text embeddings are present.
+    # Scaled so a strong semantic match (~0.8 cosine) is comparable to the +8.0
+    # exact-substring keyword bonus, letting semantics add recall without
+    # overriding exact matches.
+    SEMANTIC_WEIGHT = 10.0
+
+    def __init__(self, directory: Path, embedder: Any | None = None) -> None:
         self.directory = directory.resolve()
+        self.embedder = embedder
         manifest_path = self.directory / "manifest.json"
         chunks_path = self.directory / "chunks.jsonl"
         if not manifest_path.is_file() or not chunks_path.is_file():
@@ -260,6 +324,9 @@ class KnowledgeBase:
             for line in chunks_path.read_text(encoding="utf-8").splitlines()
             if line.strip()
         ]
+        self.has_text_embeddings = any(
+            isinstance(chunk.get("embedding"), list) for chunk in self.chunks
+        )
         document_frequency: Counter[str] = Counter()
         for chunk in self.chunks:
             document_frequency.update(set(_tokens(str(chunk.get("text", "")))))
@@ -270,14 +337,31 @@ class KnowledgeBase:
         }
 
     @classmethod
-    def open(cls, knowledge_root: Path, profile: str) -> "KnowledgeBase":
-        return cls(knowledge_root.resolve() / _safe_profile(profile))
+    def open(
+        cls, knowledge_root: Path, profile: str, embedder: Any | None = None
+    ) -> "KnowledgeBase":
+        return cls(knowledge_root.resolve() / _safe_profile(profile), embedder=embedder)
 
-    def query(self, query: str, limit: int = 4) -> dict[str, Any]:
+    def query(
+        self, query: str, limit: int = 4, embedder: Any | None = None
+    ) -> dict[str, Any]:
         if limit < 1:
             raise KnowledgeError("query limit must be at least 1")
         query_tokens = Counter(_tokens(query))
         normalized_query = " ".join(query_tokens)
+
+        # Semantic component: only when embeddings exist and a backend is usable.
+        query_embedding: list[float] | None = None
+        active_embedder = embedder or self.embedder
+        if active_embedder is not None and self.has_text_embeddings:
+            try:
+                query_embedding = active_embedder.embed([query])[0]
+            except Exception:  # noqa: BLE001 - fall back to keyword ranking
+                query_embedding = None
+        cosine_fn = None
+        if query_embedding is not None:
+            from .embeddings import cosine as cosine_fn  # type: ignore
+
         ranked: list[tuple[float, dict[str, Any]]] = []
         for chunk in self.chunks:
             text = str(chunk.get("text", ""))
@@ -289,6 +373,10 @@ class KnowledgeBase:
             normalized_text = " ".join(_tokens(text))
             if normalized_query and normalized_query in normalized_text:
                 score += 8.0
+            if cosine_fn is not None and isinstance(chunk.get("embedding"), list):
+                similarity = cosine_fn(query_embedding, chunk["embedding"])
+                if similarity > 0:
+                    score += similarity * self.SEMANTIC_WEIGHT
             if chunk.get("kind") == "task":
                 score *= 1.35
             elif chunk.get("kind") in {"screen", "icon"}:
@@ -327,6 +415,49 @@ class KnowledgeBase:
             "query": query,
             "chunks": selected,
         }
+
+    def match_icon(
+        self, image: bytes, image_embedder: Any, top_k: int = 1
+    ) -> list[dict[str, Any]]:
+        """Return the manual icons most similar to a live icon crop (CLIP).
+
+        Requires icon image embeddings in the profile and a CLIP image embedder.
+        Returns [] when either is missing, so callers can fall back to the
+        text/keyword retriever.
+        """
+        if image_embedder is None or top_k < 1:
+            return []
+        icons = [
+            chunk
+            for chunk in self.chunks
+            if chunk.get("kind") == "icon" and isinstance(chunk.get("image_embedding"), list)
+        ]
+        if not icons:
+            return []
+        from .embeddings import cosine
+
+        try:
+            query_vector = image_embedder.embed_images([image])[0]
+        except Exception:  # noqa: BLE001 - CLIP unavailable/failed
+            return []
+        scored = sorted(
+            (
+                (cosine(query_vector, chunk["image_embedding"]), chunk)
+                for chunk in icons
+            ),
+            key=lambda item: -item[0],
+        )
+        results: list[dict[str, Any]] = []
+        for similarity, chunk in scored[:top_k]:
+            result = {
+                key: value for key, value in chunk.items() if key != "image_embedding"
+            }
+            result["score"] = round(similarity, 4)
+            image_value = result.get("image")
+            if isinstance(image_value, str):
+                result["image"] = str((self.directory / image_value).resolve())
+            results.append(result)
+        return results
 
 
 def prompt_context(
