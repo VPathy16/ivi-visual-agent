@@ -13,15 +13,21 @@ class PolicyViolation(ValueError):
 def validate_action(action: Action, config: Config, goal: str = "") -> None:
     valid = {
         "tap",
+        "long_press",
+        "double_tap",
         "input_text",
+        "keyboard_enter",
         "gesture",
         "swipe",
+        "open_app",
         "back",
         "home",
         "wait",
         "text",
         "finish",
     }
+    # Actions that place a finger at a normalized point on the live screen.
+    pointer_actions = {"tap", "long_press", "double_tap", "input_text"}
     if action.type not in valid:
         raise PolicyViolation(f"Unsupported action type: {action.type}")
     if not 0.0 <= action.confidence <= 1.0:
@@ -31,12 +37,14 @@ def validate_action(action: Action, config: Config, goal: str = "") -> None:
             f"Action confidence {action.confidence:.2f} is below "
             f"{config.minimum_action_confidence:.2f}"
         )
-    if action.type in {"tap", "input_text", "swipe"}:
+    if action.type in (pointer_actions | {"swipe"}):
         coordinates = [action.x, action.y]
         if action.type == "swipe":
             coordinates += [action.x2, action.y2]
         if any(value is None or not 0.0 <= value <= 1.0 for value in coordinates):
             raise PolicyViolation("Visual action coordinates must be normalized between 0 and 1")
+    if action.type == "open_app" and not action.app_name.strip():
+        raise PolicyViolation("open_app requires a non-empty app_name")
     if action.type == "gesture":
         if action.direction not in {
             "reveal_above",
@@ -55,7 +63,7 @@ def validate_action(action: Action, config: Config, goal: str = "") -> None:
         raise PolicyViolation("Input text cannot be empty")
     if action.type == "finish" and action.outcome not in {"pass", "fail", "inconclusive"}:
         raise PolicyViolation("Finish action must contain a valid outcome")
-    if action.type in {"tap", "input_text"}:
+    if action.type in pointer_actions:
         normalized_target = " ".join(
             re.findall(r"[a-z0-9]+", action.target.lower())
         )

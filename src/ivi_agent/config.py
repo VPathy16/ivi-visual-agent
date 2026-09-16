@@ -19,6 +19,23 @@ class Config:
     prefer_ui_tree: bool = True
     enable_ocr: bool = True
     max_image_dimension: int = 768
+    # Visual grounding strategy when no accessibility candidate exists:
+    #   "grid"  -> numbered 12x6 cell overlay (works with any small VLM)
+    #   "point" -> ask the VLM for normalized coordinates directly (needs a
+    #              grounding-capable model such as qwen3-vl)
+    grounding_mode: str = "grid"
+    # Trust a concretely-resolved element_id: backfill a missing target label and
+    # do not hard-fail on target-mismatch/semantic-relatedness. Needed for small
+    # models exploring a benchmark; keep False for the strict goal-driven default.
+    lenient_planning: bool = False
+    # Ollama context window (num_ctx). A screenshot + UI candidates + history can
+    # exceed Ollama's 4096 default, causing HTTP 400 exceed_context_size errors.
+    model_context_tokens: int = 8192
+    # If True, the AndroidWorld adapter verifies completion before planning on each
+    # step of the final subgoal. This ends state-change tasks as soon as the state
+    # flips (fewer steps overall), and prevents the agent from re-toggling a control
+    # it already set. Default True; set False only for pure navigation runs.
+    verify_each_step: bool = True
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
     knowledge_root: str = "knowledge"

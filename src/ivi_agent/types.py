@@ -6,9 +6,13 @@ from typing import Any, Literal
 
 ActionKind = Literal[
     "tap",
+    "long_press",
+    "double_tap",
     "input_text",
+    "keyboard_enter",
     "gesture",
     "swipe",
+    "open_app",
     "back",
     "home",
     "wait",
@@ -34,6 +38,7 @@ class Action:
     duration_ms: int = 500
     seconds: float = 1.0
     text: str = ""
+    app_name: str = ""
     outcome: Outcome | None = None
     evidence: str = ""
 

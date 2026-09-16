@@ -102,6 +102,38 @@ class AdbDevice:
         self._run("shell", "uiautomator", "dump", remote, timeout=15)
         return str(self._run("exec-out", "cat", remote, timeout=15))
 
+    @staticmethod
+    def _escape_input_text(text: str) -> str:
+        """Make text safe for `adb shell input text`.
+
+        `input text` treats %s as a space and is parsed by the on-device shell,
+        so both the percent/space convention and shell metacharacters must be
+        escaped. This handles far more than the old space-and-percent handling,
+        which broke on ampersands, quotes, parentheses, and similar characters.
+        """
+        escaped = text.replace("%", "%25")
+        for char in "()<>|;&*~\"'`$\\":
+            escaped = escaped.replace(char, "\\" + char)
+        return escaped.replace(" ", "%s")
+
+    def type_text(self, text: str) -> None:
+        self._run("shell", "input", "text", self._escape_input_text(text))
+
+    def open_app(self, app_name: str) -> None:
+        """Best-effort launch by package name for the standalone agent.
+
+        The AndroidWorld adapter never calls this; it delegates open_app to the
+        benchmark environment, which resolves human app names to packages.
+        """
+        package = app_name.strip()
+        if not re.fullmatch(r"[A-Za-z][\w]*(?:\.[A-Za-z0-9_]+)+", package):
+            raise AdbError(
+                f"Cannot resolve app name to a package: {app_name!r}. "
+                "Provide a package id (e.g. com.android.settings) or tap the launcher."
+            )
+        self._run("shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1")
+        time.sleep(1.0)
+
     def execute(self, action: Action, size: tuple[int, int]) -> None:
         width, height = size
 
@@ -113,12 +145,26 @@ class AdbDevice:
         if action.type == "tap":
             x, y = point(action.x, action.y)
             self._run("shell", "input", "tap", x, y)
+        elif action.type == "double_tap":
+            x, y = point(action.x, action.y)
+            self._run("shell", "input", "tap", x, y)
+            time.sleep(0.12)
+            self._run("shell", "input", "tap", x, y)
+        elif action.type == "long_press":
+            x, y = point(action.x, action.y)
+            # Android has no direct long-press; a same-point swipe with a long
+            # duration is the standard equivalent.
+            duration = str(max(action.duration_ms, 600))
+            self._run("shell", "input", "swipe", x, y, x, y, duration)
+        elif action.type == "keyboard_enter":
+            self._run("shell", "input", "keyevent", "KEYCODE_ENTER")
+        elif action.type == "open_app":
+            self.open_app(action.app_name or action.target)
         elif action.type == "input_text":
             x, y = point(action.x, action.y)
             self._run("shell", "input", "tap", x, y)
             time.sleep(0.2)
-            safe_text = action.text.replace("%", "%25").replace(" ", "%s")
-            self._run("shell", "input", "text", safe_text)
+            self.type_text(action.text)
         elif action.type == "swipe":
             x1, y1 = point(action.x, action.y)
             x2, y2 = point(action.x2, action.y2)
@@ -145,8 +191,7 @@ class AdbDevice:
         elif action.type == "wait":
             time.sleep(max(0.0, min(action.seconds, 10.0)))
         elif action.type == "text":
-            safe_text = action.text.replace("%", "%25").replace(" ", "%s")
-            self._run("shell", "input", "text", safe_text)
+            self.type_text(action.text)
         else:
             raise AdbError(f"Cannot execute action type: {action.type}")
 

@@ -28,11 +28,25 @@ ACTION_SCHEMA: dict[str, Any] = {
     "properties": {
         "type": {
             "type": "string",
-            "enum": ["tap", "input_text", "gesture", "back", "home", "wait", "finish"],
+            "enum": [
+                "tap",
+                "long_press",
+                "double_tap",
+                "input_text",
+                "keyboard_enter",
+                "gesture",
+                "swipe",
+                "open_app",
+                "back",
+                "home",
+                "wait",
+                "finish",
+            ],
         },
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "reason": {"type": "string"},
         "target": {"type": "string"},
+        "app_name": {"type": "string"},
         "element_id": {"type": "integer", "minimum": 1},
         "direction": {
             "type": "string",
@@ -101,6 +115,19 @@ GROUNDING_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+POINT_GROUNDING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "found": {"type": "boolean"},
+        "x": {"type": "number", "minimum": 0, "maximum": 1},
+        "y": {"type": "number", "minimum": 0, "maximum": 1},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence": {"type": "string"},
+    },
+    "required": ["found", "x", "y", "confidence", "evidence"],
+    "additionalProperties": False,
+}
+
 
 SUBGOAL_PROMPT = """You are the milestone planner for an arbitrary Android IVI.
 Turn the user's goal into 1 to 4 sequential, observable subgoals. Describe WHAT visible
@@ -137,9 +164,21 @@ focuses and types atomically. Do not repeatedly tap an already visible or focuse
 For scrolling or paging return type "gesture" with direction reveal_above,
 reveal_below, reveal_left, or reveal_right and region center/top/bottom/left/right.
 Direction names the content the gesture should reveal, not finger motion. Do not assume
-what a gesture opens on this device. A finish action requires an outcome. Never guess an
-invisible control, delete data, place calls, purchase, reset, update software, or accept
-surprising permissions. Keep reason under 20 words. Return only action JSON.
+what a gesture opens on this device.
+Use long_press to open a context menu on a visible item, and double_tap only when a
+single tap is clearly insufficient; both ground exactly like tap (element_id or visual
+target). To drag a slider or seek bar (for example to set brightness or volume to its
+maximum or minimum), return type swipe with x,y at the slider thumb and x2,y2 at the
+target end of the track. Do not tap a scrollable list to move it; use a gesture. Use keyboard_enter to submit text already typed into a focused field. Use
+open_app with app_name only to launch a named application directly instead of hunting
+through a launcher; never invent a package name. When the goal concerns a system
+setting (for example Wi-Fi, Bluetooth, brightness, sound, or notifications) and no
+relevant control is visible on the current screen, prefer open_app with app_name
+"Settings" rather than tapping status-bar icons, clocks, or home-screen widgets.
+A finish action requires an outcome.
+Never guess an invisible control, delete data, place calls, purchase, reset, update
+software, or accept surprising permissions. Keep reason under 20 words. Return only
+action JSON.
 """
 
 
@@ -168,13 +207,25 @@ class OllamaVisionModel:
         prefer_ui_tree: bool = True,
         enable_ocr: bool = True,
         max_image_dimension: int = 1024,
+        grounding_mode: str = "grid",
+        lenient: bool = False,
+        num_ctx: int = 8192,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.num_ctx = num_ctx
         self.prefer_ui_tree = prefer_ui_tree
         self.enable_ocr = enable_ocr
         self.max_image_dimension = max_image_dimension
+        if grounding_mode not in {"grid", "point"}:
+            raise ValueError("grounding_mode must be 'grid' or 'point'")
+        self.grounding_mode = grounding_mode
+        # Lenient mode trusts a concretely-resolved element_id: it backfills a
+        # missing target label and does not hard-fail on target-mismatch or
+        # semantic-relatedness. Small models exploring a benchmark need this;
+        # the strict default preserves the original goal-driven guardrails.
+        self.lenient = lenient
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:
@@ -212,6 +263,9 @@ class OllamaVisionModel:
             "model": self.model,
             "stream": False,
             "think": False,
+            # Keep the model resident between calls so it is not reloaded (a multi-GB
+            # reload dominates latency when the model is evicted between steps).
+            "keep_alive": "10m",
             # JSON mode is more compatible and faster than grammar compilation on the
             # older local Ollama versions used by bench machines. Validation is local.
             "format": "json",
@@ -219,7 +273,9 @@ class OllamaVisionModel:
                 {"role": "system", "content": system_prompt},
                 user_message,
             ],
-            "options": {"temperature": 0},
+            # num_ctx raises Ollama's default context window (often 4096), which a
+            # screenshot + UI candidates + history easily exceeds.
+            "options": {"temperature": 0, "num_ctx": self.num_ctx},
         }
         request = urllib.request.Request(
             f"{self.base_url}/api/chat",
@@ -272,13 +328,15 @@ class OllamaVisionModel:
         allow_visual_tap: bool = False,
     ) -> None:
         candidate_ids = candidate_ids or set()
-        if action.type == "tap":
+        if action.type in {"tap", "long_press", "double_tap"}:
             if action.element_id is not None and action.element_id not in candidate_ids:
-                raise ValueError("tap must select a valid UI candidate element_id")
+                raise ValueError(f"{action.type} must select a valid UI candidate element_id")
             if action.element_id is None and (action.x is None or action.y is None):
-                raise ValueError("visual tap is missing x or y")
+                raise ValueError(f"visual {action.type} is missing x or y")
             if action.element_id is None and not allow_visual_tap:
-                raise ValueError("tap must select a UI candidate element_id")
+                raise ValueError(f"{action.type} must select a UI candidate element_id")
+        if action.type == "open_app" and not action.app_name.strip():
+            raise ValueError("open_app requires a non-empty app_name")
         if action.type == "input_text":
             if action.element_id not in candidate_ids:
                 raise ValueError("input_text must select a valid UI candidate element_id")
@@ -501,12 +559,67 @@ class OllamaVisionModel:
             return ["Open the Settings application", exact_goal]
         return [exact_goal]
 
+    def _ground_visual_target_point(
+        self,
+        image: bytes,
+        target: str,
+        reference_images: list[bytes] | None = None,
+    ) -> tuple[float, float, float]:
+        """Ask a grounding-capable VLM (e.g. qwen3-vl) for the target's point.
+
+        Coordinates are returned NORMALIZED to [0, 1] relative to the image the
+        model actually receives, so the caller never has to know the device
+        resolution or the downscaled image size. This is far more precise than
+        the 72-cell grid on models trained for GUI grounding.
+        """
+        prompt = (
+            f"IMAGE 1 is a live Android screenshot. Locate the visible center of: "
+            f"{target!r}. Return normalized coordinates where x is the fraction of the "
+            "image width from the left edge (0.0 to 1.0) and y is the fraction of the "
+            "image height from the top edge (0.0 to 1.0). Any later images are isolated "
+            "reference icons that only help identify the target; never return a location "
+            "from a reference image. If the target is not clearly visible in IMAGE 1, set "
+            "found to false. Return only JSON."
+        )
+        prepared = prepare_model_image(image, self.max_image_dimension)
+        response = self._chat(
+            "You are a GUI visual grounding component. Return the normalized on-screen "
+            "point of only the requested target in IMAGE 1; do not choose an action or "
+            "infer an invisible control.",
+            prompt,
+            [prepared, *(reference_images or [])],
+            POINT_GROUNDING_SCHEMA,
+        )
+        if isinstance(response.get("data"), dict):
+            response = response["data"]
+        found = response.get("found")
+        if isinstance(found, str):
+            found = found.strip().lower() == "true"
+        if found is not True:
+            raise ValueError(f"visual target was not found: {target}")
+        try:
+            x = float(response["x"])
+            y = float(response["y"])
+            confidence = float(response.get("confidence", 0.8))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("visual grounder returned invalid coordinates") from exc
+        # Some GUI-grounding models emit 0-1000 or pixel coordinates instead of a
+        # 0-1 fraction; rescale defensively so a valid location is not rejected.
+        if x > 1.0 or y > 1.0:
+            scale = 1000.0 if max(x, y) <= 1000.0 else float(max(x, y))
+            x, y = x / scale, y / scale
+        if not (0.0 <= x <= 1.0 and 0.0 <= y <= 1.0) or confidence < 0.6:
+            raise ValueError("visual grounder was not confident in a valid point")
+        return x, y, confidence
+
     def _ground_visual_target(
         self,
         image: bytes,
         target: str,
         reference_images: list[bytes] | None = None,
     ) -> tuple[float, float, float]:
+        if self.grounding_mode == "point":
+            return self._ground_visual_target_point(image, target, reference_images)
         prompt = (
             f"In IMAGE 1, find the numbered grid cell containing the visible center of: "
             f"{target!r}. IMAGE 1 has 72 cells: 12 columns by 6 rows, numbered left-to-right "
@@ -650,19 +763,29 @@ class OllamaVisionModel:
                     [model_image, *(reference_images or [])],
                     ACTION_SCHEMA,
                 )
-                safe_compact_types = {
-                    "back",
-                    "finish",
-                    "gesture",
-                    "home",
-                    "input_text",
-                    "wait",
-                }
-                if response.get("type") in safe_compact_types:
+                # Ollama JSON mode does not enforce the enum, so small models
+                # sometimes return a placeholder type ("action") or put the real
+                # verb under an "action"/"action_type" key. Recover it before
+                # validation instead of failing the whole step.
+                valid_types = set(ACTION_SCHEMA["properties"]["type"]["enum"])
+                if response.get("type") not in valid_types:
+                    alternate = response.get("action") or response.get("action_type")
+                    if isinstance(alternate, str) and alternate in valid_types:
+                        response["type"] = alternate
+                    elif response.get("element_id") is not None or (
+                        response.get("x") is not None and response.get("y") is not None
+                    ):
+                        # A concrete tap target was named; the verb was just mislabeled.
+                        response["type"] = "tap"
+                # The schema requires type, confidence, and reason, but small models
+                # routinely omit confidence and/or reason -- even for taps. Default
+                # them for any recognized action type rather than failing
+                # Action.from_dict on a missing required argument.
+                if isinstance(response.get("type"), str):
                     response.setdefault("confidence", 0.8)
                     response.setdefault(
                         "reason",
-                        f"Constrained {response['type']} action proposed by local model",
+                        f"{response['type']} action proposed by local model",
                     )
                 if (
                     response.get("type") in {"tap", "input_text"}
@@ -672,6 +795,12 @@ class OllamaVisionModel:
                     response["target"] = response["candidate_target"]
                 if isinstance(response.get("element_id"), str) and response["element_id"].isdigit():
                     response["element_id"] = int(response["element_id"])
+                elif isinstance(response.get("element_id"), str):
+                    # Some models put a label (e.g. "3G") in element_id instead of a
+                    # candidate number. Treat it as a visual target and drop the id.
+                    if not response.get("target"):
+                        response["target"] = response["element_id"]
+                    response["element_id"] = None
                 # A finish proposal is only a request for independent visual
                 # verification; it never directly marks the run successful. Let
                 # compact local-model responses omit redundant result fields.
@@ -679,10 +808,16 @@ class OllamaVisionModel:
                     response.setdefault("outcome", "inconclusive")
                     response.setdefault("evidence", str(response.get("reason", "")))
                 action = Action.from_dict(response)
+                tap_like = {"tap", "long_press", "double_tap"}
                 if action.type not in {
                     "tap",
+                    "long_press",
+                    "double_tap",
                     "input_text",
+                    "keyboard_enter",
                     "gesture",
+                    "swipe",
+                    "open_app",
                     "back",
                     "home",
                     "wait",
@@ -690,18 +825,47 @@ class OllamaVisionModel:
                 }:
                     raise ValueError("unknown action type")
                 if (
-                    action.type == "tap"
-                    and use_visual_fallback
+                    action.type in ({"input_text"} | tap_like)
+                    and action.element_id is None
+                    and action.target
+                    and elements
+                ):
+                    # Models often name the control ("Network & internet") instead
+                    # of returning its candidate number. Resolve the named target to
+                    # an accessibility candidate by label before falling back to
+                    # visual grounding.
+                    normalize = lambda value: " ".join(
+                        re.findall(r"[a-z0-9]+", value.lower())
+                    )
+                    wanted = normalize(action.target)
+                    match = next(
+                        (el for el in elements if normalize(el.label) == wanted), None
+                    )
+                    if match is None and wanted:
+                        match = next(
+                            (el for el in elements if wanted in normalize(el.label)),
+                            None,
+                        )
+                    if match is not None:
+                        action.element_id = match.id
+                        action.x, action.y = match.center
+                        action.target = match.label
+                if (
+                    action.type in tap_like
+                    and (use_visual_fallback or self.lenient)
                     and action.element_id is None
                     and (action.x is None or action.y is None)
                     and action.target
                 ):
+                    # In lenient mode, a named target that matched no accessibility
+                    # candidate is still located visually from the screenshot rather
+                    # than failing the step.
                     action.x, action.y, grounding_confidence = self._ground_visual_target(
                         image, action.target, reference_images
                     )
                     action.confidence = min(action.confidence, grounding_confidence)
                 if (
-                    action.type == "tap"
+                    action.type in tap_like
                     and use_visual_fallback
                     and action.element_id is not None
                     and action.element_id not in candidate_ids
@@ -716,10 +880,27 @@ class OllamaVisionModel:
                     action.element_id = None
                     action.confidence = min(action.confidence, grounding_confidence)
                 self._validate_action_shape(
-                    action, candidate_ids, allow_visual_tap=use_visual_fallback
+                    action,
+                    candidate_ids,
+                    allow_visual_tap=use_visual_fallback or self.lenient,
                 )
-                if action.type in {"tap", "input_text"} and action.element_id is not None:
+                if action.type in ({"input_text"} | tap_like) and action.element_id is not None:
                     selected = next(item for item in elements if item.id == action.element_id)
+                    if action.type in tap_like and selected.scrollable:
+                        # The model tapped a scroll container -- it means to scroll,
+                        # not tap. Tapping the middle of a list opens whatever row is
+                        # there (the brightness runs looped on this). Convert to a
+                        # scroll gesture so list navigation actually advances.
+                        upward = re.search(
+                            r"\b(up|back|previous|top|above)\b", action.reason.lower()
+                        )
+                        return Action(
+                            type="gesture",
+                            direction="reveal_above" if upward else "reveal_below",
+                            region="center",
+                            confidence=max(action.confidence, 0.8),
+                            reason=action.reason or "Scroll the list to reveal more",
+                        )
                     declared_target = " ".join(
                         re.findall(r"[a-z0-9]+", action.target.lower())
                     )
@@ -727,9 +908,20 @@ class OllamaVisionModel:
                         re.findall(r"[a-z0-9]+", selected.label.lower())
                     )
                     if not declared_target:
-                        raise ValueError("candidate action must declare its exact target label")
+                        if self.lenient:
+                            # Trust the resolved candidate; backfill its label.
+                            action.target = selected.label
+                            declared_target = selected_target
+                        else:
+                            raise ValueError(
+                                "candidate action must declare its exact target label"
+                            )
                     if declared_target != selected_target:
-                        if use_visual_fallback and action.type == "tap":
+                        if self.lenient and action.element_id in candidate_ids:
+                            # A concrete id was chosen; trust it over the mislabel.
+                            action.target = selected.label
+                            declared_target = selected_target
+                        elif use_visual_fallback and action.type in tap_like:
                             # OCR boxes are hints, not authority. If the model names a
                             # different visible control, discard its incorrect box ID
                             # and independently ground that semantic target.
@@ -747,7 +939,11 @@ class OllamaVisionModel:
                             "declared target does not match the selected candidate label"
                         )
                     if not self._candidate_semantically_advances(action, decision_goal):
-                        if use_visual_fallback and action.type == "tap":
+                        if self.lenient:
+                            # Let the agent explore; loop-detection and independent
+                            # verification still guard against unproductive taps.
+                            pass
+                        elif use_visual_fallback and action.type in tap_like:
                             intended_target = self._destination_name(decision_goal)
                             goal_terms = set(re.findall(r"[a-z0-9]+", intended_target))
                             reason_terms = set(
@@ -765,10 +961,11 @@ class OllamaVisionModel:
                                     action.confidence, grounding_confidence
                                 )
                                 return action
-                        raise ValueError(
-                            "selected candidate is not semantically related to the "
-                            "current subgoal"
-                        )
+                        if not self.lenient:
+                            raise ValueError(
+                                "selected candidate is not semantically related to the "
+                                "current subgoal"
+                            )
                     navigation_goal = bool(
                         re.match(
                             r"^\s*(?:open|show|go\s+to|navigate\s+to|launch)\b",
@@ -776,7 +973,7 @@ class OllamaVisionModel:
                             re.IGNORECASE,
                         )
                     )
-                    if action.type == "tap" and navigation_goal and selected.stateful:
+                    if action.type in tap_like and navigation_goal and selected.stateful:
                         raise ValueError(
                             "a navigation goal cannot tap a state-changing control"
                         )
@@ -821,6 +1018,12 @@ class OllamaVisionModel:
             [prepared, *(reference_images or [])],
             VERIFICATION_SCHEMA,
         )
+        if result.get("outcome") == "pass" and self.lenient:
+            # Trust the model's visual verdict on the benchmark. The text-subset
+            # heuristics below cannot verify state-change goals ("Turn wifi on":
+            # the verb never appears on screen and "wifi" tokenizes as wi/fi), so
+            # they would loop the agent on an already-completed task.
+            return result
         if result.get("outcome") == "pass":
             navigation_goal = bool(
                 re.match(

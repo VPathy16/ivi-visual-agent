@@ -1,0 +1,412 @@
+import io
+import json
+import unittest
+from contextlib import contextmanager
+from unittest import mock
+
+from PIL import Image
+
+from ivi_agent.adb import AdbDevice, AdbError
+from ivi_agent.config import Config
+from ivi_agent.model import ACTION_SCHEMA, GROUNDING_SCHEMA, OllamaVisionModel
+from ivi_agent.policy import PolicyViolation, validate_action
+from ivi_agent.types import Action
+
+
+class RecordingDevice(AdbDevice):
+    def __init__(self) -> None:
+        super().__init__(serial="emulator-5554")
+        self.calls: list[tuple[str, ...]] = []
+
+    def _run(self, *args, binary=False, timeout=20):  # type: ignore[override]
+        self.calls.append(args)
+        return b"" if binary else ""
+
+
+class ExpandedPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.config = Config()
+
+    def test_accepts_long_press_and_double_tap(self) -> None:
+        for kind in ("long_press", "double_tap"):
+            validate_action(
+                Action(type=kind, x=0.4, y=0.6, confidence=0.9, reason="visible"),
+                self.config,
+            )
+
+    def test_accepts_keyboard_enter(self) -> None:
+        validate_action(
+            Action(type="keyboard_enter", confidence=0.9, reason="submit"), self.config
+        )
+
+    def test_open_app_requires_app_name(self) -> None:
+        with self.assertRaisesRegex(PolicyViolation, "app_name"):
+            validate_action(
+                Action(type="open_app", confidence=0.9, reason="launch"), self.config
+            )
+        validate_action(
+            Action(type="open_app", app_name="Chrome", confidence=0.9, reason="launch"),
+            self.config,
+        )
+
+    def test_long_press_needs_normalized_coordinates(self) -> None:
+        with self.assertRaisesRegex(PolicyViolation, "normalized"):
+            validate_action(
+                Action(type="long_press", x=1.5, y=0.5, confidence=0.9, reason="x"),
+                self.config,
+            )
+
+    def test_destructive_guard_applies_to_long_press(self) -> None:
+        with self.assertRaisesRegex(PolicyViolation, "blocked"):
+            validate_action(
+                Action(
+                    type="long_press",
+                    x=0.5,
+                    y=0.5,
+                    target="Uninstall app",
+                    confidence=0.9,
+                    reason="x",
+                ),
+                self.config,
+            )
+
+
+class AdbExecutionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.device = RecordingDevice()
+        self.size = (1000, 2000)
+
+    def test_double_tap_issues_two_taps(self) -> None:
+        self.device.execute(
+            Action(type="double_tap", x=0.5, y=0.5, confidence=0.9, reason="x"), self.size
+        )
+        taps = [c for c in self.device.calls if c[:3] == ("shell", "input", "tap")]
+        self.assertEqual(len(taps), 2)
+
+    def test_long_press_uses_same_point_swipe(self) -> None:
+        self.device.execute(
+            Action(type="long_press", x=0.5, y=0.5, duration_ms=800, confidence=0.9, reason="x"),
+            self.size,
+        )
+        swipe = next(c for c in self.device.calls if c[:3] == ("shell", "input", "swipe"))
+        # start == end point, long duration
+        self.assertEqual(swipe[3], swipe[5])
+        self.assertEqual(swipe[4], swipe[6])
+        self.assertEqual(swipe[7], "800")
+
+    def test_keyboard_enter_sends_enter_keyevent(self) -> None:
+        self.device.execute(
+            Action(type="keyboard_enter", confidence=0.9, reason="x"), self.size
+        )
+        self.assertIn(("shell", "input", "keyevent", "KEYCODE_ENTER"), self.device.calls)
+
+    def test_open_app_rejects_non_package_name(self) -> None:
+        with self.assertRaisesRegex(AdbError, "package"):
+            self.device.execute(
+                Action(type="open_app", app_name="Chrome", confidence=0.9, reason="x"),
+                self.size,
+            )
+
+    def test_open_app_launches_package(self) -> None:
+        self.device.execute(
+            Action(
+                type="open_app",
+                app_name="com.android.settings",
+                confidence=0.9,
+                reason="x",
+            ),
+            self.size,
+        )
+        self.assertTrue(
+            any(c[:2] == ("shell", "monkey") for c in self.device.calls)
+        )
+
+    def test_input_text_escaping_handles_special_characters(self) -> None:
+        escaped = AdbDevice._escape_input_text('a b&c(d)"e"')
+        self.assertNotIn(" ", escaped)  # spaces become %s
+        self.assertIn("%s", escaped)
+        self.assertIn("\\&", escaped)
+        self.assertIn("\\(", escaped)
+
+
+class NumCtxPayloadTests(unittest.TestCase):
+    def test_num_ctx_is_sent_in_options(self) -> None:
+        captured = {}
+
+        @contextmanager
+        def fake_urlopen(request, timeout=None):
+            captured["data"] = json.loads(request.data.decode("utf-8"))
+
+            class _Resp:
+                def read(self_inner):
+                    return json.dumps({"message": {"content": "{}"}}).encode("utf-8")
+
+            yield _Resp()
+
+        model = OllamaVisionModel("http://localhost", "m", num_ctx=16384)
+        with mock.patch("ivi_agent.model.urllib.request.urlopen", fake_urlopen):
+            model._chat("sys", "user", None, {})
+        self.assertEqual(captured["data"]["options"]["num_ctx"], 16384)
+
+
+class ModelSchemaTests(unittest.TestCase):
+    def test_action_schema_includes_new_types(self) -> None:
+        enum = set(ACTION_SCHEMA["properties"]["type"]["enum"])
+        for kind in ("long_press", "double_tap", "keyboard_enter", "open_app", "swipe"):
+            self.assertIn(kind, enum)
+
+    def test_grounding_mode_validation(self) -> None:
+        with self.assertRaises(ValueError):
+            OllamaVisionModel("http://x", "m", grounding_mode="bogus")
+
+
+class PointGroundingModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "qwen3-vl:8b-instruct", grounding_mode="point")
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        return {"found": True, "x": 0.42, "y": 0.66, "confidence": 0.9}
+
+
+class ThousandScalePointModel(PointGroundingModel):
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        return {"found": True, "x": 420, "y": 660, "confidence": 0.9}
+
+
+def _blank_png() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (64, 64), "white").save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class ActionTypeAliasModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m")
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # Mimics a small model that mislabels the action type as "action".
+        return {
+            "type": "action",
+            "element_id": 1,
+            "target": "Wifi",
+            "confidence": 0.9,
+            "reason": "tap wifi",
+        }
+
+
+class ActionTypeCoercionTests(unittest.TestCase):
+    def test_placeholder_action_type_is_coerced_to_tap(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Wifi" class="android.widget.TextView" clickable="true" '
+            'bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = ActionTypeAliasModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertEqual(action.element_id, 1)
+
+
+class LenientNoTargetModel(OllamaVisionModel):
+    def __init__(self, lenient: bool) -> None:
+        super().__init__("http://localhost", "m", lenient=lenient)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # Valid element_id but NO target label and an unrelated reason.
+        return {"type": "tap", "element_id": 1, "confidence": 0.9, "reason": "go"}
+
+
+class LenientPlanningTests(unittest.TestCase):
+    UI = (
+        '<hierarchy rotation="0">'
+        '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+        '<node text="Settings" class="android.widget.TextView" clickable="true" '
+        'bounds="[10,10][90,40]"/>'
+        "</node></hierarchy>"
+    )
+
+    def test_strict_mode_rejects_missing_target(self) -> None:
+        from ivi_agent.model import ModelError
+
+        with self.assertRaises(ModelError):
+            LenientNoTargetModel(lenient=False).plan("Turn wifi on", _blank_png(), self.UI, [])
+
+    def test_lenient_mode_backfills_target_and_taps(self) -> None:
+        action = LenientNoTargetModel(lenient=True).plan(
+            "Turn wifi on", _blank_png(), self.UI, []
+        )
+        self.assertEqual(action.type, "tap")
+        self.assertEqual(action.element_id, 1)
+        self.assertEqual(action.target, "Settings")
+
+
+class StringElementIdModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)  # grid grounding
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        if schema is GROUNDING_SCHEMA:
+            return {"found": True, "cell": 1, "confidence": 0.9, "evidence": "x"}
+        return {
+            "type": "tap",
+            "element_id": "3G",  # a label, not a candidate number
+            "target": "",
+            "confidence": 0.9,
+            "reason": "tap 3g",
+        }
+
+
+class StringElementIdTests(unittest.TestCase):
+    def test_non_numeric_element_id_becomes_visual_target(self) -> None:
+        action = StringElementIdModel().plan("Turn wifi on", _blank_png(), "", [])
+        self.assertEqual(action.type, "tap")
+        self.assertIsNone(action.element_id)
+        self.assertIsNotNone(action.x)
+        self.assertIsNotNone(action.y)
+
+
+class NamedTargetModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # Names the control, gives no element_id and no coordinates.
+        return {
+            "type": "tap",
+            "target": "Network & internet",
+            "confidence": 0.9,
+            "reason": "open network settings",
+        }
+
+
+class NamedTargetResolutionTests(unittest.TestCase):
+    def test_named_target_resolves_to_accessibility_candidate(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Network &amp; internet" class="android.widget.TextView" '
+            'clickable="true" bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = NamedTargetModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertEqual(action.element_id, 1)
+        self.assertIsNotNone(action.x)
+        self.assertIsNotNone(action.y)
+
+
+class UngroundedNamedTargetModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)  # grid grounding
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        if schema is GROUNDING_SCHEMA:
+            return {"found": True, "cell": 5, "confidence": 0.9, "evidence": "x"}
+        return {"type": "tap", "target": "Wi-Fi", "confidence": 0.9, "reason": "tap wifi"}
+
+
+class NoConfidenceModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m")
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        # A tap that omits the required confidence and reason fields.
+        return {"type": "tap", "element_id": 1, "target": "Wifi"}
+
+
+class MissingFieldDefaultTests(unittest.TestCase):
+    def test_tap_without_confidence_is_defaulted_not_crashed(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Wifi" class="android.widget.TextView" clickable="true" '
+            'bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = NoConfidenceModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertGreaterEqual(action.confidence, 0.75)
+
+
+class LenientVisualGroundingTests(unittest.TestCase):
+    def test_named_target_not_a_candidate_is_visually_grounded(self) -> None:
+        # The only accessibility candidate is Bluetooth, so "Wi-Fi" cannot match a
+        # candidate; lenient mode must fall back to visual grounding.
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][100,200]">'
+            '<node text="Bluetooth" class="android.widget.TextView" clickable="true" '
+            'bounds="[10,10][90,40]"/>'
+            "</node></hierarchy>"
+        )
+        action = UngroundedNamedTargetModel().plan("Turn wifi on", _blank_png(), ui, [])
+        self.assertEqual(action.type, "tap")
+        self.assertIsNone(action.element_id)
+        self.assertIsNotNone(action.x)
+        self.assertIsNotNone(action.y)
+
+
+class _VerifyPassModel(OllamaVisionModel):
+    def __init__(self, lenient: bool) -> None:
+        super().__init__("http://localhost", "m", lenient=lenient, enable_ocr=False)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        return {"outcome": "pass", "confidence": 0.95, "evidence": "blue Wi-Fi toggle is on"}
+
+
+class StateChangeVerifyTests(unittest.TestCase):
+    def test_lenient_verify_trusts_model_pass_for_state_change_goal(self) -> None:
+        result = _VerifyPassModel(lenient=True).verify("Turn wifi on", _blank_png(), "")
+        self.assertEqual(result["outcome"], "pass")
+
+    def test_strict_verify_downgrades_when_terms_not_on_screen(self) -> None:
+        result = _VerifyPassModel(lenient=False).verify("Turn wifi on", _blank_png(), "")
+        self.assertEqual(result["outcome"], "inconclusive")
+
+
+class ScrollTapModel(OllamaVisionModel):
+    def __init__(self) -> None:
+        super().__init__("http://localhost", "m", lenient=True)
+
+    def _chat(self, system_prompt, user_prompt, image, schema):  # type: ignore[override]
+        return {
+            "type": "tap",
+            "target": "main content",
+            "confidence": 0.8,
+            "reason": "scroll down to find Display",
+        }
+
+
+class ScrollTapConversionTests(unittest.TestCase):
+    def test_tap_on_scrollable_container_becomes_scroll_gesture(self) -> None:
+        ui = (
+            '<hierarchy rotation="0">'
+            '<node class="android.widget.FrameLayout" bounds="[0,0][1000,2000]">'
+            '<node content-desc="main content" '
+            'class="androidx.recyclerview.widget.RecyclerView" scrollable="true" '
+            'clickable="true" bounds="[0,100][1000,1900]"/>'
+            "</node></hierarchy>"
+        )
+        action = ScrollTapModel().plan(
+            "Turn brightness to the max value", _blank_png(), ui, []
+        )
+        self.assertEqual(action.type, "gesture")
+        self.assertEqual(action.direction, "reveal_below")
+
+
+class PointGroundingTests(unittest.TestCase):
+    def test_point_mode_returns_normalized_coordinates(self) -> None:
+        x, y, confidence = PointGroundingModel()._ground_visual_target(_blank_png(), "OK")
+        self.assertAlmostEqual(x, 0.42)
+        self.assertAlmostEqual(y, 0.66)
+        self.assertAlmostEqual(confidence, 0.9)
+
+    def test_point_mode_rescales_thousand_based_coordinates(self) -> None:
+        x, y, _ = ThousandScalePointModel()._ground_visual_target(_blank_png(), "OK")
+        self.assertAlmostEqual(x, 0.42)
+        self.assertAlmostEqual(y, 0.66)
+
+
+if __name__ == "__main__":
+    unittest.main()
