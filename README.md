@@ -780,6 +780,15 @@ Each run creates a timestamped directory under `runs/` containing:
   otherwise), and a `grounding` summary counts CV vs. model steps and total
   decision time — so you can see how much the fast-path saved.
 - `report.html`: a human-readable test report (with a **Grounded by** column)
+- `events.jsonl`: the ordered event stream of the run (one JSON object per line:
+  `run_start`, `retrieval`, `plan`, `step_begin`, `decision`, `execute`,
+  `verify`, `incident`, `done`) — the backbone for replay and diagnostics.
+- `agent.log`: the same events as timestamped text.
+- `task.json` / `plan.json`: the goal + config snapshot and the planned subgoals.
+
+The trace layer (`trace: true`, default on) is best-effort — a tracing failure
+never aborts a run. The event schema is open, so future signal sources (VHAL/CAN
+vehicle state, system logs) append as their own event kinds.
 
 The `runs/` directory is intentionally ignored by Git because it can grow quickly.
 

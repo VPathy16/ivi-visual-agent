@@ -19,6 +19,7 @@ from .perception import (
 )
 from .policy import PolicyViolation, validate_action
 from .report import write_report
+from .trace import NullTrace, RunTrace
 from .types import RunResult, StepRecord, SubgoalRecord
 from .vision_match import cv_ground_from_knowledge
 
@@ -168,6 +169,27 @@ class GoalAgent:
             run_directory=str(directory.resolve()),
             started_at=started.isoformat(),
         )
+        trace: RunTrace = (
+            RunTrace(directory, run_id) if getattr(self.config, "trace", True) else NullTrace()
+        )
+        trace.write_json(
+            "task.json",
+            {
+                "run_id": run_id,
+                "goal": goal,
+                "dry_run": dry_run,
+                "started_at": started.isoformat(),
+                "config": {
+                    "model": self.config.model,
+                    "grounding_mode": self.config.grounding_mode,
+                    "knowledge_profile": self.config.knowledge_profile,
+                    "cv_fast_path": self.config.cv_fast_path,
+                    "max_actions": self.config.max_actions,
+                    "timeout_seconds": self.config.timeout_seconds,
+                },
+            },
+        )
+        trace.event("run_start", goal=goal, run_id=run_id, dry_run=dry_run)
         deadline = time.monotonic() + self.config.timeout_seconds
         history: list[dict[str, object]] = []
         failed_action_memory: list[tuple[int, set[tuple[object, ...]]]] = []
@@ -197,6 +219,12 @@ class GoalAgent:
                         str(item) for item in result.knowledge["retrieved_chunk_ids"]
                     )
                 )
+                trace.event(
+                    "retrieval",
+                    scope="initial",
+                    profile=result.knowledge.get("profile"),
+                    chunk_ids=result.knowledge["retrieved_chunk_ids"],
+                )
             self.progress("Planning observable subgoals")
             plan = self.model.create_plan(goal, initial_context)
             result.subgoals = [
@@ -206,6 +234,13 @@ class GoalAgent:
             result.subgoals[0].status = "running"
             self.progress(
                 "Plan: " + " -> ".join(item.description for item in result.subgoals)
+            )
+            trace.write_json(
+                "plan.json",
+                {"goal": goal, "subgoals": [item.description for item in result.subgoals]},
+            )
+            trace.event(
+                "plan", subgoals=[item.description for item in result.subgoals]
             )
             for number in range(1, self.config.max_actions + 1):
                 if time.monotonic() >= deadline:
@@ -242,6 +277,18 @@ class GoalAgent:
                     else {}
                 )
                 step_references = reference_images(step_knowledge) if step_knowledge else []
+                trace.event(
+                    "step_begin",
+                    step=number,
+                    subgoal=current_subgoal.description,
+                    subgoal_index=current_subgoal_index,
+                    titles=observed_titles,
+                    retrieved_chunk_ids=[
+                        chunk.get("id") for chunk in step_knowledge.get("chunks", [])
+                    ]
+                    if step_knowledge
+                    else [],
+                )
                 final_title = title_satisfies_navigation_goal(goal, observed_titles)
                 if final_title is not None:
                     for prerequisite in result.subgoals[:-1]:
@@ -298,6 +345,14 @@ class GoalAgent:
                     confidence = float(verification.get("confidence", 0.0))
                     evidence = str(
                         verification.get("evidence", "No verification evidence")
+                    )
+                    trace.event(
+                        "verify",
+                        scope="final_subgoal",
+                        step=number,
+                        outcome=outcome,
+                        confidence=round(confidence, 3),
+                        evidence=evidence,
                     )
                     if (
                         outcome == "pass"
@@ -425,6 +480,16 @@ class GoalAgent:
                     f"Step {number}: {action.type} {action.target or action.direction} "
                     f"({decision_seconds:.1f}s, confidence {action.confidence:.2f})"
                 )
+                trace.event(
+                    "decision",
+                    step=number,
+                    grounded_by=grounded_by,
+                    action=action.type,
+                    target=action.target,
+                    confidence=round(action.confidence, 3),
+                    decision_seconds=round(decision_seconds, 3),
+                    reason=action.reason,
+                )
 
                 if action.type == "finish":
                     verification_goal = (
@@ -442,6 +507,14 @@ class GoalAgent:
                     outcome = str(verification.get("outcome", "inconclusive"))
                     confidence = float(verification.get("confidence", 0.0))
                     evidence = str(verification.get("evidence", "No verification evidence"))
+                    trace.event(
+                        "verify",
+                        scope="finish_action",
+                        step=number,
+                        outcome=outcome,
+                        confidence=round(confidence, 3),
+                        evidence=evidence,
+                    )
                     if outcome == "pass" and confidence >= self.config.minimum_success_confidence:
                         current_subgoal.status = "passed"
                         current_subgoal.evidence = evidence
@@ -498,6 +571,15 @@ class GoalAgent:
                 except Exception:
                     after_ui = ""
                 step.screen_changed = screen_made_progress(before, after, ui_dump, after_ui)
+                trace.event(
+                    "execute",
+                    step=number,
+                    action=action.type,
+                    target=action.target,
+                    screen_changed=step.screen_changed,
+                    screenshot=screenshot_name,
+                    after_screenshot=f"step-{number:02d}-after.png",
+                )
                 history.append(
                     {
                         "step": number,
@@ -513,6 +595,14 @@ class GoalAgent:
                     remember_failed_action(
                         failed_action_memory, screen_hash, signature
                     )
+                    trace.event(
+                        "incident",
+                        kind_detail="no_progress",
+                        step=number,
+                        action=action.type,
+                        target=action.target,
+                        blocked_action=repr(signature),
+                    )
                     history.append(
                         {
                             "warning": "Action made no visible progress and is blocked on this screen.",
@@ -522,6 +612,7 @@ class GoalAgent:
         except (PolicyViolation, Exception) as exc:
             result.outcome = "inconclusive"
             result.reason = f"Stopped safely: {exc}"
+            trace.event("incident", kind_detail="stopped_safely", error=str(exc))
         finally:
             result.finished_at = datetime.now(timezone.utc).isoformat()
             cv_steps = sum(1 for step in result.steps if step.grounded_by == "cv")
@@ -535,5 +626,12 @@ class GoalAgent:
                 "total_steps": len(result.steps),
                 "total_decision_seconds": round(decision_total, 3),
             }
+            trace.event(
+                "done",
+                outcome=result.outcome,
+                reason=result.reason,
+                grounding=result.grounding,
+            )
+            trace.close()
             write_report(result)
         return result

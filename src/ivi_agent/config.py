@@ -72,6 +72,11 @@ class Config:
     cv_fast_path: bool = False
     cv_match_threshold: float = 0.75
     cv_min_retrieval_score: float = 2.0
+    # Structured run trace. When enabled, each run also writes events.jsonl (the
+    # ordered event stream), agent.log (human-readable), task.json, and plan.json
+    # into the run directory — the backbone for replay, diagnostics, and an
+    # engineer report. Best-effort; never aborts a run.
+    trace: bool = True
 
     def __post_init__(self) -> None:
         if self.protected_regions is None:
