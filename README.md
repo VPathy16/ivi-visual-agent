@@ -775,8 +775,11 @@ Each run creates a timestamped directory under `runs/` containing:
 
 - `step-NN.png`: screen observed before each decision
 - `step-NN-after.png`: screen after an executed action
-- `result.json`: goal, subgoals, actions, timing, and verification evidence
-- `report.html`: a human-readable test report
+- `result.json`: goal, subgoals, actions, timing, and verification evidence.
+  Each step records `grounded_by` (`cv` for an OpenCV fast-path tap, `model`
+  otherwise), and a `grounding` summary counts CV vs. model steps and total
+  decision time — so you can see how much the fast-path saved.
+- `report.html`: a human-readable test report (with a **Grounded by** column)
 
 The `runs/` directory is intentionally ignored by Git because it can grow quickly.
 

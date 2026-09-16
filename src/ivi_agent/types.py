@@ -56,6 +56,9 @@ class StepRecord:
     ui_dump_available: bool
     screen_changed: bool | None = None
     decision_seconds: float | None = None
+    # How the action was grounded: "cv" (OpenCV fast-path, no model call) or
+    # "model" (vision-model planner/grounder).
+    grounded_by: str = "model"
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -82,6 +85,8 @@ class RunResult:
     knowledge: dict[str, Any] = field(default_factory=dict)
     subgoals: list[SubgoalRecord] = field(default_factory=list)
     steps: list[StepRecord] = field(default_factory=list)
+    # Populated at finish: counts of how steps were grounded and decision time.
+    grounding: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
     finished_at: str = ""
 

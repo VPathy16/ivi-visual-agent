@@ -319,6 +319,7 @@ class GoalAgent:
                 # directly and skip the slow model call. Falls through to the
                 # model whenever the match is weak, blocked, or policy-rejected.
                 action = None
+                grounded_by = "model"
                 if self.config.cv_fast_path and step_knowledge:
                     candidate = cv_ground_from_knowledge(
                         image, step_knowledge, self.config
@@ -327,6 +328,7 @@ class GoalAgent:
                         try:
                             validate_action(candidate, self.config, goal)
                             action = candidate
+                            grounded_by = "cv"
                             self.progress(
                                 f"Step {number}: cv2 fast-path grounded "
                                 f"'{candidate.target}' (score {candidate.confidence:.2f}); "
@@ -416,6 +418,7 @@ class GoalAgent:
                     action=action,
                     ui_dump_available=bool(ui_dump),
                     decision_seconds=decision_seconds,
+                    grounded_by=grounded_by,
                 )
                 result.steps.append(step)
                 self.progress(
@@ -521,5 +524,16 @@ class GoalAgent:
             result.reason = f"Stopped safely: {exc}"
         finally:
             result.finished_at = datetime.now(timezone.utc).isoformat()
+            cv_steps = sum(1 for step in result.steps if step.grounded_by == "cv")
+            model_steps = sum(1 for step in result.steps if step.grounded_by != "cv")
+            decision_total = sum(
+                step.decision_seconds or 0.0 for step in result.steps
+            )
+            result.grounding = {
+                "cv_fast_path_steps": cv_steps,
+                "model_steps": model_steps,
+                "total_steps": len(result.steps),
+                "total_decision_seconds": round(decision_total, 3),
+            }
             write_report(result)
         return result

@@ -16,6 +16,7 @@ def write_report(result: RunResult) -> None:
     for step in result.steps:
         action = step.action
         decision = f"{step.decision_seconds:.2f}s" if step.decision_seconds is not None else "—"
+        ground = "CV" if step.grounded_by == "cv" else "model"
         step_rows.append(
             "<tr>"
             f"<td>{step.number}</td>"
@@ -23,6 +24,7 @@ def write_report(result: RunResult) -> None:
             f"<td>{html.escape(action.type)}</td>"
             f"<td>{html.escape(action.target)}</td>"
             f"<td>{action.confidence:.2f}</td>"
+            f"<td>{html.escape(ground)}</td>"
             f"<td>{decision}</td>"
             f"<td>{html.escape(action.reason)}</td>"
             "</tr>"
@@ -48,6 +50,15 @@ def write_report(result: RunResult) -> None:
             f"<br><strong>Manual:</strong> {html.escape(str(result.knowledge.get('manual_id', '')))}"
             f"<br><strong>Retrieved:</strong> {chunk_ids}</p>"
         )
+    grounding_summary = ""
+    if result.grounding:
+        grounding_summary = (
+            "<p><strong>Grounding:</strong> "
+            f"{result.grounding.get('cv_fast_path_steps', 0)} CV fast-path / "
+            f"{result.grounding.get('model_steps', 0)} model "
+            f"of {result.grounding.get('total_steps', 0)} steps · "
+            f"total decision time {result.grounding.get('total_decision_seconds', 0)}s</p>"
+        )
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>IVI Agent Report</title>
 <style>
@@ -66,6 +77,7 @@ img{{width:280px;height:auto}} th{{background:#f4f4f4}}
 <table><thead><tr><th>#</th><th>Milestone</th><th>Status</th><th>Evidence</th></tr></thead>
 <tbody>{subgoal_rows}</tbody></table>
 <h2>Actions</h2>
-<table><thead><tr><th>#</th><th>Screen</th><th>Action</th><th>Target</th><th>Confidence</th><th>Decision</th><th>Reason</th></tr></thead>
+{grounding_summary}
+<table><thead><tr><th>#</th><th>Screen</th><th>Action</th><th>Target</th><th>Confidence</th><th>Grounded by</th><th>Decision</th><th>Reason</th></tr></thead>
 <tbody>{''.join(step_rows)}</tbody></table></body></html>"""
     (directory / "report.html").write_text(document, encoding="utf-8")
