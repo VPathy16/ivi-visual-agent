@@ -12,6 +12,10 @@ dependencies = ["Pillow>=10.0"]
 
 [project.optional-dependencies]
 docs = ["reportlab>=4.0", "pypdf>=5.0"]
+# Optional CLIP backend for matching a live icon crop against manual icons.
+# Text semantic retrieval needs no extra dependency (it uses a local Ollama
+# embedding model over HTTP).
+clip = ["open-clip-torch>=2.20", "torch>=2.0"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"

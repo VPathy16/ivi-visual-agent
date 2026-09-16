@@ -434,7 +434,11 @@ The default `config.example.json` uses:
   "protected_regions": [],
   "knowledge_root": "knowledge",
   "knowledge_profile": null,
-  "knowledge_top_k": 4
+  "knowledge_top_k": 4,
+  "use_embeddings": false,
+  "embedding_model": "nomic-embed-text",
+  "icon_matching": false,
+  "clip_model": "ViT-B-32"
 }
 ```
 
@@ -452,6 +456,27 @@ candidate exists:
 
 Set `knowledge_profile` in `config.json` to use one vehicle manual by default, or pass
 `--knowledge-profile` for an individual run. Generated knowledge profiles stay local.
+
+### Semantic retrieval (optional)
+
+By default the manual/RAG retriever uses keyword/TF-IDF matching. Enable semantic
+retrieval for better paraphrase and proprietary-icon recall:
+
+```json
+{
+  "use_embeddings": true,
+  "embedding_model": "nomic-embed-text",
+  "icon_matching": true,
+  "clip_model": "ViT-B-32"
+}
+```
+
+- **Text embeddings** blend a local Ollama embedding score with keyword matching.
+  `ollama pull nomic-embed-text` — no extra Python dependency; falls back to
+  keyword-only when the embedding model is unreachable.
+- **`icon_matching`** adds CLIP image matching of a live icon crop against the
+  manual icons (`KnowledgeBase.match_icon`); needs the optional extra
+  `pip install -e '.[clip]'` and degrades gracefully when unavailable.
 
 Coordinates in `protected_regions` are normalized rectangles in the form
 `[left, top, right, bottom]`. This prevents taps in the upper-right corner:
@@ -572,23 +597,26 @@ the OEM's documentation.
 Proprietary icons (climate zones, seat massage, drive modes) are the main
 recognition risk. Give the agent an icon/step reference it can retrieve:
 
+A ready-made scaffold ships at [`examples/benz-mbux-manual/`](examples/benz-mbux-manual/)
+(home, vehicle settings, climate, seat-massage screens + icons, with placeholder
+crops to replace). See its README for details.
+
 ```bash
 pip install -e '.[docs]'          # reportlab + pypdf
 brew install poppler              # pdftoppm, required to index the PDF
 
-cp -R examples/custom-ivi-manual examples/benz-mbux
-# Replace examples/benz-mbux/images/ with real Benz screen + icon crops.
-# Edit examples/benz-mbux/manual.json: for each icon give a clear `meaning` and
-# rich `synonyms` (e.g. "seat massage", "lumbar", "comfort"); describe each screen
-# (home, vehicle settings, climate, seat massage) and the task steps.
+# Start from the scaffold, then replace examples/benz-mbux-manual/images/* with
+# real Benz screen + icon crops and refine each icon's `meaning`/`synonyms` in
+# examples/benz-mbux-manual/manual.json.
 
-ivi-agent manual build --source examples/benz-mbux --output output/pdf/benz.pdf
+ivi-agent manual build --source examples/benz-mbux-manual --output output/pdf/benz.pdf
 ivi-agent knowledge index output/pdf/benz.pdf --profile benz
 ivi-agent knowledge query --profile benz --goal "Start the seat massage"   # sanity check
 ```
 
-The retriever is keyword/synonym based, so the quality of `meaning`/`synonyms` in
-`manual.json` directly drives recognition of proprietary controls.
+The `meaning`/`synonyms` you write for each icon directly drive recognition of
+proprietary controls. For better paraphrase/icon recall, enable **semantic
+retrieval** (`use_embeddings` / `icon_matching`) — see the Configuration section.
 
 ### 2. Configure for a vehicle bench
 

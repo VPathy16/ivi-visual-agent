@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "manual": {
+    "id": "benz-mbux-sample-v1",
+    "title": "Benz-style IVI (sample scaffold)",
+    "ui_profile": "MBUX-style Cockpit",
+    "version": "2026.09",
+    "description": "SCAFFOLD with placeholder crops. Replace every image with real screenshots/icon crops from the target unit and refine the meanings/synonyms before using against a device. Covers a custom home screen, vehicle settings, climate, and seat-massage screens."
+  },
+  "icons": [
+    {
+      "id": "climate",
+      "name": "Climate",
+      "image": "images/icon-climate.png",
+      "meaning": "Opens the climate/HVAC screen with temperature, fan, and zone controls.",
+      "opens": "screen.climate",
+      "synonyms": ["A/C", "air conditioning", "temperature", "HVAC", "fan", "heating", "cooling"]
+    },
+    {
+      "id": "seat_massage",
+      "name": "Seat massage",
+      "image": "images/icon-seat-massage.png",
+      "meaning": "Opens the seat comfort / massage screen with programs and intensity.",
+      "opens": "screen.seat_massage",
+      "synonyms": ["massage", "seat comfort", "lumbar", "back massage", "kinetic seat"]
+    },
+    {
+      "id": "vehicle_settings",
+      "name": "Vehicle settings",
+      "image": "images/icon-vehicle-settings.png",
+      "meaning": "Opens vehicle settings (driving modes, lighting, seat comfort, displays).",
+      "opens": "screen.vehicle_settings",
+      "synonyms": ["car settings", "vehicle", "settings", "car menu"]
+    }
+  ],
+  "screens": [
+    {
+      "id": "screen.home",
+      "name": "Home - tile grid",
+      "image": "images/home.png",
+      "description": "Custom launcher with large tiles. Tile positions vary by configuration.",
+      "landmarks": ["Status bar", "Large tile grid", "Climate / Seat Comfort / Vehicle tiles"],
+      "controls": [
+        {
+          "id": "home.climate_tile",
+          "name": "Climate tile",
+          "icon_id": "climate",
+          "action": "Activate the tile",
+          "result": "screen.climate"
+        },
+        {
+          "id": "home.seat_tile",
+          "name": "Seat Comfort tile",
+          "icon_id": "seat_massage",
+          "action": "Activate the tile",
+          "result": "screen.seat_massage"
+        },
+        {
+          "id": "home.vehicle_tile",
+          "name": "Vehicle tile",
+          "icon_id": "vehicle_settings",
+          "action": "Activate the tile",
+          "result": "screen.vehicle_settings"
+        }
+      ]
+    },
+    {
+      "id": "screen.vehicle_settings",
+      "name": "Vehicle settings",
+      "image": "images/vehicle-settings.png",
+      "description": "List of vehicle setting categories.",
+      "landmarks": ["Driving modes row", "Lighting row", "Seat comfort row", "Displays row"],
+      "controls": [
+        {
+          "id": "vehicle.seat_comfort",
+          "name": "Seat comfort",
+          "action": "Open seat comfort",
+          "result": "screen.seat_massage"
+        }
+      ]
+    },
+    {
+      "id": "screen.climate",
+      "name": "Climate",
+      "image": "images/climate.png",
+      "description": "HVAC controls. Temperature is a slider; fan/zones/auto/AC are toggles.",
+      "landmarks": ["Driver temperature value", "Temperature slider", "Fan / Zones / Auto / A/C controls"],
+      "controls": [
+        {
+          "id": "climate.driver_temp",
+          "name": "Driver temperature slider",
+          "action": "Drag the slider to the target temperature (full right = maximum)",
+          "result": "screen.climate"
+        }
+      ]
+    },
+    {
+      "id": "screen.seat_massage",
+      "name": "Seat massage",
+      "image": "images/seat-massage.png",
+      "description": "Massage programs (Wave, Lumbar, Shoulder), an intensity slider, and Start.",
+      "landmarks": ["Program cards", "Intensity slider", "Start button"],
+      "controls": [
+        {
+          "id": "seat.program_wave",
+          "name": "Wave program",
+          "action": "Select the Wave massage program",
+          "result": "screen.seat_massage"
+        },
+        {
+          "id": "seat.start",
+          "name": "Start",
+          "action": "Start the selected massage program",
+          "result": "screen.seat_massage"
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task.open_climate",
+      "name": "Open the climate screen",
+      "goal": "Open the climate screen",
+      "steps": [
+        {
+          "screen": "screen.home",
+          "target": "home.climate_tile",
+          "instruction": "Locate the Climate tile by its label or the climate icon and activate it.",
+          "milestone": "Open the climate screen",
+          "expected": "The climate screen with temperature and fan controls is visible"
+        }
+      ],
+      "success": ["Climate screen title is visible", "Temperature and fan controls are visible"],
+      "forbidden": ["Do not change temperature unless asked", "Do not accept unexpected permissions"]
+    },
+    {
+      "id": "task.start_seat_massage",
+      "name": "Start the seat massage",
+      "goal": "Start the seat massage",
+      "steps": [
+        {
+          "screen": "screen.home",
+          "target": "home.seat_tile",
+          "instruction": "Activate the Seat Comfort tile (or Vehicle settings > Seat comfort).",
+          "milestone": "Open the seat massage screen",
+          "expected": "The seat massage programs are visible"
+        },
+        {
+          "screen": "screen.seat_massage",
+          "target": "seat.program_wave",
+          "instruction": "Select a massage program such as Wave.",
+          "milestone": "Select a massage program",
+          "expected": "A program is highlighted as selected"
+        },
+        {
+          "screen": "screen.seat_massage",
+          "target": "seat.start",
+          "instruction": "Activate Start to begin the massage.",
+          "milestone": "Start the seat massage",
+          "expected": "The massage is running (Start becomes Stop / a running indicator appears)"
+        }
+      ],
+      "success": ["A massage program is selected", "The massage is running"],
+      "forbidden": ["Do not change drive mode", "Do not adjust seat position", "Do not accept unexpected permissions"]
+    }
+  ]
+}

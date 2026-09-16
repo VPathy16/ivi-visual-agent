@@ -123,13 +123,29 @@ def main() -> None:
             raise SystemExit(0)
         if args.command == "knowledge":
             from .knowledge import KnowledgeBase, index_pdf
+            from .embeddings import resolve_image_embedder, resolve_text_embedder
 
+            knowledge_config = Config.load(args.config)
+            text_embedder = resolve_text_embedder(
+                knowledge_config.ollama_url,
+                knowledge_config.embedding_model,
+                knowledge_config.use_embeddings,
+            )
             if args.knowledge_command == "index":
-                summary = index_pdf(Path(args.pdf), Path(args.output), args.profile)
-            else:
-                summary = KnowledgeBase.open(Path(args.root), args.profile).query(
-                    args.goal, args.limit
+                image_embedder = resolve_image_embedder(
+                    knowledge_config.clip_model, knowledge_config.icon_matching
                 )
+                summary = index_pdf(
+                    Path(args.pdf),
+                    Path(args.output),
+                    args.profile,
+                    text_embedder=text_embedder,
+                    image_embedder=image_embedder,
+                )
+            else:
+                summary = KnowledgeBase.open(
+                    Path(args.root), args.profile, embedder=text_embedder
+                ).query(args.goal, args.limit)
             print(json.dumps(summary, indent=2))
             raise SystemExit(0)
         config = Config.load(args.config)
@@ -150,11 +166,17 @@ def main() -> None:
             num_ctx=config.model_context_tokens,
         )
         from .knowledge import KnowledgeBase
+        from .embeddings import resolve_text_embedder
 
         profile = args.knowledge_profile or config.knowledge_profile
         knowledge_root = Path(args.knowledge_root or config.knowledge_root)
+        text_embedder = resolve_text_embedder(
+            config.ollama_url, config.embedding_model, config.use_embeddings
+        )
         knowledge_base = (
-            KnowledgeBase.open(knowledge_root, profile) if profile else None
+            KnowledgeBase.open(knowledge_root, profile, embedder=text_embedder)
+            if profile
+            else None
         )
         if args.command == "suite":
             summary = run_suite(
