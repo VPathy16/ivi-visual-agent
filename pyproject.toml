@@ -12,9 +12,13 @@ dependencies = ["Pillow>=10.0"]
 
 [project.optional-dependencies]
 docs = ["reportlab>=4.0", "pypdf>=5.0"]
+# Self-contained text-embedding backend (embedding_backend="fastembed"): ONNX
+# runtime, no torch, no Ollama. Model weights are fetched on first use. Use this
+# when you don't want to run Ollama or pull an embedding model.
+embeddings = ["fastembed>=0.3"]
+# The "ollama" text-embedding backend needs no extra dependency (it calls a
+# local Ollama embedding model over HTTP with the stdlib).
 # Optional CLIP backend for matching a live icon crop against manual icons.
-# Text semantic retrieval needs no extra dependency (it uses a local Ollama
-# embedding model over HTTP).
 clip = ["open-clip-torch>=2.20", "torch>=2.0"]
 
 [project.scripts]

@@ -19,6 +19,7 @@
   "knowledge_profile": null,
   "knowledge_top_k": 4,
   "use_embeddings": false,
+  "embedding_backend": "ollama",
   "embedding_model": "nomic-embed-text",
   "icon_matching": false,
   "clip_model": "ViT-B-32"

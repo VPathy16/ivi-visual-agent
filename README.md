@@ -487,20 +487,45 @@ Set `knowledge_profile` in `config.json` to use one vehicle manual by default, o
 ### Semantic retrieval (optional)
 
 By default the manual/RAG retriever uses keyword/TF-IDF matching. Enable semantic
-retrieval for better paraphrase and proprietary-icon recall:
+retrieval for better paraphrase and proprietary-icon recall. Two text-embedding
+backends are available — pick one with `embedding_backend`:
+
+**A. `fastembed` — self-contained, no Ollama, no model to pull (recommended):**
 
 ```json
 {
   "use_embeddings": true,
-  "embedding_model": "nomic-embed-text",
-  "icon_matching": true,
-  "clip_model": "ViT-B-32"
+  "embedding_backend": "fastembed",
+  "embedding_model": "BAAI/bge-small-en-v1.5"
 }
 ```
 
-- **Text embeddings** blend a local Ollama embedding score with keyword matching.
-  `ollama pull nomic-embed-text` — no extra Python dependency; falls back to
-  keyword-only when the embedding model is unreachable.
+```bash
+pip install -e '.[embeddings]'   # ONNX runtime, no torch; weights auto-downloaded on first use
+```
+
+**B. `ollama` — reuse your local Ollama:**
+
+```json
+{
+  "use_embeddings": true,
+  "embedding_backend": "ollama",
+  "embedding_model": "nomic-embed-text"
+}
+```
+
+```bash
+ollama pull nomic-embed-text     # needs Ollama running with the model pulled
+```
+
+- **Text embeddings** blend the embedding score with keyword matching, so a goal
+  that shares no tokens with a chunk is still recalled. Either backend falls back
+  to keyword-only when unavailable — nothing breaks if the model or extra is
+  missing. Example: with the `benz` profile, the query *"switch on the chair
+  kneading rollers"* (no literal *seat*/*massage* tokens) returns nothing useful
+  under keyword-only, but returns `task.start_seat_massage` under semantic.
+- **Embeddings are written at index time**, so switch on the backend *before*
+  `ivi-agent knowledge index` (re-index an existing profile to add vectors).
 - **`icon_matching`** adds CLIP image matching of a live icon crop against the
   manual icons (`KnowledgeBase.match_icon`); needs the optional extra
   `pip install -e '.[clip]'` and degrades gracefully when unavailable.

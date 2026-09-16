@@ -42,11 +42,22 @@ class Config:
     knowledge_profile: str | None = None
     knowledge_top_k: int = 4
     # Semantic retrieval. When enabled, the manual/RAG retriever blends a local
-    # Ollama text-embedding score with keyword matching (better paraphrase and
+    # text-embedding score with keyword matching (better paraphrase and
     # proprietary-icon recall); it falls back to keyword-only when the embedding
-    # model is unreachable. icon_matching adds optional CLIP image matching of a
-    # live icon crop against the manual icons (needs the '[clip]' extra).
+    # backend is unavailable.
+    #   embedding_backend "ollama"    -> local Ollama model (needs Ollama running
+    #                                    and the model pulled); embedding_model is
+    #                                    an Ollama tag, default nomic-embed-text.
+    #   embedding_backend "fastembed" -> self-contained ONNX model via the
+    #                                    '[embeddings]' extra; no Ollama, no
+    #                                    torch, weights auto-downloaded on first
+    #                                    use. embedding_model may name a fastembed
+    #                                    id (e.g. BAAI/bge-base-en-v1.5) or is
+    #                                    ignored in favor of the built-in default.
+    # icon_matching adds optional CLIP image matching of a live icon crop against
+    # the manual icons (needs the '[clip]' extra).
     use_embeddings: bool = False
+    embedding_backend: str = "ollama"
     embedding_model: str = "nomic-embed-text"
     icon_matching: bool = False
     clip_model: str = "ViT-B-32"

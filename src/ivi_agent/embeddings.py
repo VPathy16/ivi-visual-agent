@@ -1,17 +1,22 @@
 """Local embedding backends for semantic knowledge retrieval.
 
-Two optional, pluggable backends upgrade the manual/RAG retriever from keyword
+Pluggable, optional backends upgrade the manual/RAG retriever from keyword
 matching to semantic matching, while staying local:
 
 * :class:`OllamaTextEmbedder` — text embeddings via a local Ollama model
   (default ``nomic-embed-text``). Uses only ``urllib`` (no new dependency), the
-  same transport as :mod:`ivi_agent.model`.
+  same transport as :mod:`ivi_agent.model`. Requires a running Ollama with the
+  model pulled.
+* :class:`FastEmbedTextEmbedder` — text embeddings via ``fastembed`` (ONNX
+  runtime, no ``torch``, no separate server). Pip-installable with the
+  ``[embeddings]`` extra; the small model is fetched automatically on first use
+  and cached. Use this when you don't want to run Ollama or pull a model.
 * :class:`ClipImageEmbedder` — CLIP image/text embeddings for matching a live
   icon crop against the manual's reference icons. Needs the optional ``[clip]``
   extra (``open-clip-torch`` + ``torch``); import is guarded so the core stays
   lightweight.
 
-Both are optional: when unavailable, the retriever falls back to the existing
+All are optional: when unavailable, the retriever falls back to the existing
 keyword/TF-IDF ranking, so nothing breaks.
 """
 
@@ -93,6 +98,50 @@ class OllamaTextEmbedder:
             return False
 
 
+#: Default fastembed model — small (~130 MB), CPU-friendly, 384-dim, strong
+#: retrieval quality. Overridable via ``embedding_model`` when it names a
+#: fastembed model id (e.g. ``BAAI/bge-base-en-v1.5``).
+FASTEMBED_DEFAULT_MODEL = "BAAI/bge-small-en-v1.5"
+
+
+class FastEmbedTextEmbedder:
+    """Text embeddings via ``fastembed`` — no Ollama, no torch, no server.
+
+    ``fastembed`` runs the model on the ONNX runtime and downloads/caches the
+    weights on first use, so semantic retrieval works from a plain
+    ``pip install`` without pulling an Ollama model.
+    """
+
+    def __init__(self, model_name: str = FASTEMBED_DEFAULT_MODEL) -> None:
+        try:
+            from fastembed import TextEmbedding  # type: ignore
+        except ImportError as exc:  # pragma: no cover - depends on optional extra
+            raise EmbeddingError(
+                "fastembed embeddings need the optional extra: "
+                "python -m pip install -e '.[embeddings]'"
+            ) from exc
+        self.model_name = model_name
+        try:
+            self._model = TextEmbedding(model_name=model_name)
+        except Exception as exc:  # noqa: BLE001 - bad name / download failure
+            raise EmbeddingError(
+                f"Could not load fastembed model {model_name!r}: {exc}"
+            ) from exc
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        try:
+            vectors = list(self._model.embed(list(texts)))
+        except Exception as exc:  # noqa: BLE001 - runtime embedding failure
+            raise EmbeddingError(f"fastembed embedding failed: {exc}") from exc
+        return [[float(value) for value in vector] for vector in vectors]
+
+    @staticmethod
+    def available() -> bool:
+        return importlib.util.find_spec("fastembed") is not None
+
+
 class ClipImageEmbedder:
     """CLIP image/text embeddings (optional; needs the ``[clip]`` extra)."""
 
@@ -152,11 +201,31 @@ class ClipImageEmbedder:
 
 
 def resolve_text_embedder(
-    base_url: str, model: str, enabled: bool
-) -> OllamaTextEmbedder | None:
-    """Return a ready text embedder, or None when disabled/unreachable."""
+    base_url: str, model: str, enabled: bool, backend: str = "ollama"
+) -> OllamaTextEmbedder | FastEmbedTextEmbedder | None:
+    """Return a ready text embedder, or None when disabled/unavailable.
+
+    ``backend`` selects the implementation:
+
+    * ``"ollama"`` (default) — needs a running Ollama with ``model`` pulled.
+    * ``"fastembed"`` — self-contained; needs the ``[embeddings]`` extra. Uses
+      ``model`` when it names a fastembed model id (contains ``/``), else the
+      built-in default, so an Ollama-style ``embedding_model`` doesn't leak in.
+
+    Any failure (disabled, missing dependency, unreachable server, download
+    error) returns ``None`` so the retriever falls back to keyword ranking.
+    """
     if not enabled:
         return None
+    if backend == "fastembed":
+        if not FastEmbedTextEmbedder.available():
+            return None
+        fast_model = model if "/" in model else FASTEMBED_DEFAULT_MODEL
+        try:
+            fast = FastEmbedTextEmbedder(fast_model)
+            return fast if fast.embed(["ping"])[0] else None
+        except (EmbeddingError, IndexError):
+            return None
     embedder = OllamaTextEmbedder(base_url, model)
     return embedder if embedder.available() else None
 

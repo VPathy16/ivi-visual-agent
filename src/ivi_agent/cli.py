@@ -130,6 +130,7 @@ def main() -> None:
                 knowledge_config.ollama_url,
                 knowledge_config.embedding_model,
                 knowledge_config.use_embeddings,
+                knowledge_config.embedding_backend,
             )
             if args.knowledge_command == "index":
                 image_embedder = resolve_image_embedder(
@@ -171,7 +172,10 @@ def main() -> None:
         profile = args.knowledge_profile or config.knowledge_profile
         knowledge_root = Path(args.knowledge_root or config.knowledge_root)
         text_embedder = resolve_text_embedder(
-            config.ollama_url, config.embedding_model, config.use_embeddings
+            config.ollama_url,
+            config.embedding_model,
+            config.use_embeddings,
+            config.embedding_backend,
         )
         knowledge_base = (
             KnowledgeBase.open(knowledge_root, profile, embedder=text_embedder)
