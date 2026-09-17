@@ -22,7 +22,9 @@ embeddings = ["fastembed>=0.3"]
 clip = ["open-clip-torch>=2.20", "torch>=2.0"]
 # OpenCV fast-path: template-match a retrieved manual icon on the live screen to
 # tap it directly, skipping the slow model call when the match is confident.
-cv = ["opencv-python-headless>=4.8", "numpy>=1.24"]
+# opencv 5.x requires numpy>=2, which conflicts with android_world/pandas
+# (numpy<2). Cap to 4.x so the CV fast-path coexists with the benchmark stack.
+cv = ["opencv-python-headless>=4.8,<5", "numpy>=1.24,<2"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"
