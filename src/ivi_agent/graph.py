@@ -46,6 +46,15 @@ def _tokens(*values: Any) -> set[str]:
     return out
 
 
+def _match_tokens(values: Any) -> set[str]:
+    """Tokens usable for screen identity: drop single chars and pure numbers.
+
+    Status-bar clutter in a live title ("Driver 22.0°C", "A/c VEH") tokenizes to
+    noise like {driver, 22, 0, c} that would otherwise drown out the screen name.
+    """
+    return {t for t in _tokens(values) if len(t) >= 2 and not t.isdigit()}
+
+
 def _hamming(a: int, b: int) -> int:
     return bin((a ^ b) & ((1 << 64) - 1)).count("1")
 
@@ -157,16 +166,19 @@ class SceneGraph:
         proximity (for title-less screens). ``similarity`` is an optional hook
         (e.g. CV screen match by node id) reserved for future use.
         """
-        observed = _tokens(titles)
+        observed = _match_tokens(titles)
         best_id, best_score, best_tie = None, 0.0, 0.0
         for node in self.nodes.values():
-            node_tokens = set(node.tokens)
+            node_tokens = _match_tokens(node.tokens)
             if observed and node_tokens:
-                # Containment: fraction of the observed title explained by the
-                # node's tokens. Tie-break by Jaccard so an exact name wins over a
-                # longer name that merely contains the same word.
                 shared = len(observed & node_tokens)
-                score = shared / len(observed)
+                if shared == 0:
+                    continue
+                # Score by the BETTER of the two directional coverages, so a
+                # verbose manual name ("Home - tile grid" vs on-screen "Home")
+                # and a noisy observed title (status-bar clutter) both still
+                # match. Tie-break by Jaccard for the tightest fit.
+                score = max(shared / len(observed), shared / len(node_tokens))
                 tie = shared / len(observed | node_tokens)
                 if score > best_score or (score == best_score and tie > best_tie):
                     best_id, best_score, best_tie = node.id, score, tie

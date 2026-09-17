@@ -74,6 +74,19 @@ class ObserveTests(unittest.TestCase):
         self.assertIsNotNone(res.finding)
         self.assertEqual(res.finding.kind, "undocumented_transition")
 
+    def test_noisy_status_bar_titles_still_match(self) -> None:
+        # Real device titles carry status-bar clutter; the screen name must still
+        # match its manual node instead of being flagged undocumented.
+        g = SceneGraph.from_manual(MANUAL)
+        home = g.observe(["Home", "A/c VEH"], run_id="r1")
+        self.assertEqual(home.node_id, "screen.home")
+        self.assertIsNone(home.finding)
+        clim = g.observe(["Climate", "Driver 22.0°C"], run_id="r1",
+                         came_from="screen.home", via_action="tap", via_target="home.climate_tile")
+        self.assertEqual(clim.node_id, "screen.climate")
+        self.assertIsNone(clim.finding)
+        self.assertEqual(g.nodes["screen.climate"].status, "confirmed")
+
     def test_phash_matches_titleless_screen(self) -> None:
         g = SceneGraph.from_manual(MANUAL)
         g.observe(["Climate"], phash=0b1010, run_id="r1")

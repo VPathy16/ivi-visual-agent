@@ -351,7 +351,7 @@ class GoalAgent:
                             "graph_divergence",
                             step=number,
                             finding=observation.finding.id,
-                            kind=observation.finding.kind,
+                            finding_kind=observation.finding.kind,
                             detail=observation.finding.detail,
                         )
 

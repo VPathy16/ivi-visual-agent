@@ -54,13 +54,14 @@ class RunTrace:
         except Exception:  # noqa: BLE001 - tracing must never break a run
             self.enabled = False
 
-    def event(self, kind: str, message: str | None = None, **fields: Any) -> None:
+    def event(self, event_type: str, message: str | None = None, **fields: Any) -> None:
         """Record one event to events.jsonl and agent.log.
 
-        ``kind`` is a stable category (e.g. "plan", "decision", "execute",
+        ``event_type`` is a stable category (e.g. "plan", "decision", "execute",
         "verify", "incident", "vehicle_state", "done"). ``fields`` are arbitrary
         JSON-serializable details. ``message`` is an optional human summary for
-        the text log; it defaults to the kind.
+        the text log; it defaults to the event type. The parameter is named
+        ``event_type`` (not ``kind``) so a caller may pass a ``kind`` field.
         """
         if not self.enabled:
             return
@@ -68,7 +69,7 @@ class RunTrace:
         record = {
             "seq": self._seq,
             "ts": datetime.now(timezone.utc).isoformat(),
-            "kind": kind,
+            "kind": event_type,
             **fields,
         }
         try:
@@ -77,10 +78,10 @@ class RunTrace:
         except Exception:  # noqa: BLE001
             pass
         if self._logger is not None:
-            summary = message or kind
+            summary = message or event_type
             detail = " ".join(f"{key}={value!r}" for key, value in fields.items())
             try:
-                self._logger.info("[%s] %s %s", kind, summary, detail)
+                self._logger.info("[%s] %s %s", event_type, summary, detail)
             except Exception:  # noqa: BLE001
                 pass
 
