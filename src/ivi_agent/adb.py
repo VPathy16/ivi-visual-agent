@@ -103,14 +103,28 @@ class AdbDevice:
         return self._resolved_capture_display_id
 
     def capture(self, destination: Path) -> bytes:
-        args = ["exec-out", "screencap", "-p"]
         capture_display_id = self.capture_display_id()
+        image: bytes | None = None
         if capture_display_id is not None:
-            args += ["-d", str(capture_display_id)]
-        image = self._run(*args, binary=True, timeout=30)
-        assert isinstance(image, bytes)
-        if not image.startswith(b"\x89PNG"):
-            raise AdbError("ADB returned invalid screenshot data")
+            # Some (multi-display) emulators reject `screencap -d <id>` and return
+            # an error string instead of a PNG. Try the targeted capture, but fall
+            # back to a plain screencap (which screen_size() relies on) rather than
+            # failing the run.
+            candidate = self._run(
+                "exec-out", "screencap", "-p", "-d", str(capture_display_id),
+                binary=True, timeout=30,
+            )
+            if isinstance(candidate, bytes) and candidate.startswith(b"\x89PNG"):
+                image = candidate
+        if image is None:
+            candidate = self._run("exec-out", "screencap", "-p", binary=True, timeout=30)
+            if isinstance(candidate, bytes) and candidate.startswith(b"\x89PNG"):
+                image = candidate
+        if image is None:
+            raise AdbError(
+                "ADB returned invalid screenshot data (tried "
+                f"display id {capture_display_id} and default display)"
+            )
         destination.write_bytes(image)
         return image
 
