@@ -833,7 +833,9 @@ The trace layer (`trace: true`, default on) is best-effort — a tracing failure
 never aborts a run. The event schema is open, so future signal sources (VHAL/CAN
 vehicle state, system logs) append as their own event kinds — see the design for
 operator-declared state probes, CCF divergence checks, recovery hooks, and MCP:
-[docs/probes-commands-and-mcp.md](docs/probes-commands-and-mcp.md).
+[docs/future-upgrades/probes-commands-and-mcp.md](docs/future-upgrades/probes-commands-and-mcp.md).
+The full backlog of planned upgrades lives in
+[docs/future-upgrades/](docs/future-upgrades/README.md).
 
 The `runs/` directory is intentionally ignored by Git because it can grow quickly.
 
