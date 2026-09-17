@@ -31,5 +31,8 @@
   "cv_match_threshold": 0.75,
   "cv_min_retrieval_score": 2.0,
   "trace": true,
-  "scene_graph": true
+  "scene_graph": true,
+  "capture_logs": true,
+  "target_package": "",
+  "fail_on_crash": true
 }

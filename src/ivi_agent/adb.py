@@ -153,6 +153,20 @@ class AdbDevice:
         destination.write_bytes(image)
         return image
 
+    def clear_logcat(self) -> None:
+        """Best-effort clear of the logcat buffers at run start."""
+        try:
+            self._run("logcat", "-c", timeout=10)
+        except AdbError:
+            pass
+
+    def logcat_dump(self, tail_lines: int = 4000) -> str:
+        """Dump recent logcat (non-blocking). Empty string on failure."""
+        try:
+            return str(self._run("logcat", "-d", "-v", "time", "-t", str(tail_lines), timeout=20))
+        except AdbError:
+            return ""
+
     def ui_dump(self) -> str:
         remote = "/sdcard/ivi-agent-window.xml"
         self._run("shell", "uiautomator", "dump", remote, timeout=15)

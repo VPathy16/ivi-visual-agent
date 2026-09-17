@@ -828,6 +828,10 @@ Each run creates a timestamped directory under `runs/` containing:
   `verify`, `incident`, `done`) — the backbone for replay and diagnostics.
 - `agent.log`: the same events as timestamped text.
 - `task.json` / `plan.json`: the goal + config snapshot and the planned subgoals.
+- `logcat.txt`: logcat captured during the run (cleared at start). Fatal events
+  (Java crash, ANR, native signal, process death) are scanned out and listed in
+  `result.json` (`crashes`) and the report; `fail_on_crash` (default on) fails the
+  run when one is found, and `target_package` attributes/filters them.
 
 The trace layer (`trace: true`, default on) is best-effort — a tracing failure
 never aborts a run. The event schema is open, so future signal sources (VHAL/CAN

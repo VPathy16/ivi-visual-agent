@@ -19,6 +19,7 @@ from .perception import (
     perceptual_hash,
 )
 from .graph import SceneGraph
+from .logs import crash_summary, scan_crashes
 from .policy import PolicyViolation, validate_action
 from .report import write_report
 from .trace import NullTrace, RunTrace
@@ -344,6 +345,8 @@ class GoalAgent:
         try:
             self.device.ensure_ready()
             self.device.wake_if_needed()
+            if getattr(self.config, "capture_logs", True):
+                self.device.clear_logcat()
             size = self.device.screen_size()
             initial_knowledge = (
                 self.knowledge.query(goal, self.config.knowledge_top_k)
@@ -968,6 +971,47 @@ class GoalAgent:
                         f"{len(pending)} HMI divergence(s) need review "
                         "(candidate defects) — see result.json / scene_graph.json"
                     )
+            # Crash / ANR capture: scan logcat once at the end (cleared at start),
+            # write logcat.txt for debugging, and surface any fatal events.
+            if getattr(self.config, "capture_logs", True):
+                try:
+                    logcat_text = self.device.logcat_dump(
+                        getattr(self.config, "log_tail_lines", 4000)
+                    )
+                    if logcat_text:
+                        try:
+                            (directory / "logcat.txt").write_text(
+                                logcat_text, encoding="utf-8"
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                        events = scan_crashes(
+                            logcat_text, self.config.target_package or None
+                        )
+                        result.crashes = crash_summary(events)
+                        for event in events:
+                            trace.event(
+                                "crash",
+                                crash_kind=event.kind,
+                                package=event.package,
+                                summary=event.summary,
+                                logcat_line=event.line,
+                            )
+                        if events:
+                            self.progress(
+                                f"⚠ {len(events)} fatal log event(s) detected "
+                                f"(see logcat.txt): "
+                                + "; ".join(f"{e.kind}:{e.package}" for e in events[:3])
+                            )
+                            if getattr(self.config, "fail_on_crash", True):
+                                result.outcome = "fail"
+                                first = events[0]
+                                result.reason = (
+                                    f"Crash detected during run: {first.kind} "
+                                    f"{first.package} — {first.summary}"
+                                )
+                except Exception:  # noqa: BLE001 - log capture is advisory
+                    pass
             trace.event(
                 "done",
                 outcome=result.outcome,

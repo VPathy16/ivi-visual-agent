@@ -89,6 +89,16 @@ class Config:
     # into the run directory — the backbone for replay, diagnostics, and an
     # engineer report. Best-effort; never aborts a run.
     trace: bool = True
+    # Crash/ANR capture. When enabled, the run clears logcat at start, scans it
+    # after each action and at the end for fatal events (Java crash, ANR, native
+    # signal, process death), writes logcat.txt into the run directory, and lists
+    # any crashes in result.json / the report. target_package (e.g. the app under
+    # test) attributes and filters events; empty = report all fatal events.
+    # fail_on_crash marks the run failed if a crash is detected.
+    capture_logs: bool = True
+    target_package: str = ""
+    fail_on_crash: bool = True
+    log_tail_lines: int = 4000
     # Living scene graph. When a knowledge profile is active, seed an expected
     # screen graph from the manual, then confirm nodes/edges as the agent reaches
     # screens and flag screens/transitions that diverge from the manual as

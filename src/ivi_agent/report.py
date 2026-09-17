@@ -77,6 +77,25 @@ def write_report(result: RunResult) -> None:
             f"<strong>Pending review:</strong> {cov.get('pending_findings', 0)}</p>"
             f"{findings_table}"
         )
+    crashes_html = ""
+    if result.crashes:
+        rows = "".join(
+            "<tr>"
+            f"<td>{html.escape(str(c.get('kind', '')))}</td>"
+            f"<td>{html.escape(str(c.get('package', '')))}</td>"
+            f"<td>{html.escape(str(c.get('summary', '')))}</td>"
+            f"<td>logcat:{html.escape(str(c.get('line', '')))}</td>"
+            "</tr>"
+            for c in result.crashes
+        )
+        crashes_html = (
+            "<h2 style='color:#b00020'>Crashes / ANRs "
+            f"({len(result.crashes)})</h2>"
+            "<p>Fatal events detected in logcat during the run — see "
+            "<code>logcat.txt</code>.</p>"
+            "<table><thead><tr><th>Kind</th><th>Package</th><th>Summary</th>"
+            f"<th>Where</th></tr></thead><tbody>{rows}</tbody></table>"
+        )
     grounding_summary = ""
     if result.grounding:
         grounding_summary = (
@@ -103,6 +122,7 @@ img{{width:280px;height:auto}} th{{background:#f4f4f4}}
 <p>{html.escape(result.reason)}</p>
 <p>{html.escape(result.started_at)} — {html.escape(result.finished_at)}</p>
 {knowledge}
+{crashes_html}
 {scene_graph_html}
 <h2>Subgoals</h2>
 <table><thead><tr><th>#</th><th>Milestone</th><th>Status</th><th>Evidence</th></tr></thead>
