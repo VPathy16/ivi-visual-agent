@@ -15,7 +15,10 @@ class Config:
     model_timeout_seconds: int = 30
     minimum_action_confidence: float = 0.75
     minimum_success_confidence: float = 0.85
-    settle_timeout_seconds: float = 5.0
+    # Max time to wait for the screen to stop changing after an action. Lower is
+    # faster; raise it for animation-heavy IVIs. See settle_poll_seconds.
+    settle_timeout_seconds: float = 2.0
+    settle_poll_seconds: float = 0.2
     prefer_ui_tree: bool = True
     enable_ocr: bool = True
     max_image_dimension: int = 768

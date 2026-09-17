@@ -451,7 +451,11 @@ class GoalAgent:
                         f"Subgoal {current_subgoal.number} observed; advancing"
                     )
                     current_subgoal = result.subgoals[current_subgoal_index]
-                if current_subgoal_index == len(result.subgoals) - 1:
+                if (
+                    getattr(self.config, "verify_each_step", True)
+                    and current_subgoal_index == len(result.subgoals) - 1
+                    and number > 1
+                ):
                     verification = self.model.verify(
                         goal,
                         image,
@@ -680,7 +684,11 @@ class GoalAgent:
 
                 before = screen_hash
                 self.device.execute(action, size)
-                self.device.wait_until_stable(directory, self.config.settle_timeout_seconds)
+                self.device.wait_until_stable(
+                    directory,
+                    self.config.settle_timeout_seconds,
+                    getattr(self.config, "settle_poll_seconds", 0.2),
+                )
                 check_path = directory / f"step-{number:02d}-after.png"
                 after_image = self.device.capture(check_path)
                 after = perceptual_hash(after_image)
@@ -767,17 +775,24 @@ class GoalAgent:
             result.reason = f"Stopped safely: {exc}"
             trace.event("incident", kind_detail="stopped_safely", error=str(exc))
         finally:
-            result.finished_at = datetime.now(timezone.utc).isoformat()
+            finished = datetime.now(timezone.utc)
+            result.finished_at = finished.isoformat()
             cv_steps = sum(1 for step in result.steps if step.grounded_by == "cv")
             model_steps = sum(1 for step in result.steps if step.grounded_by != "cv")
             decision_total = sum(
                 step.decision_seconds or 0.0 for step in result.steps
             )
+            wall_total = max(0.0, (finished - started).total_seconds())
+            steps_done = len(result.steps)
             result.grounding = {
                 "cv_fast_path_steps": cv_steps,
                 "model_steps": model_steps,
-                "total_steps": len(result.steps),
+                "total_steps": steps_done,
                 "total_decision_seconds": round(decision_total, 3),
+                # Wall-clock is what beats a human tester; decision time is only
+                # the model/CV part. The gap is capture + settle + verify overhead.
+                "total_wall_seconds": round(wall_total, 3),
+                "wall_seconds_per_step": round(wall_total / steps_done, 3) if steps_done else 0.0,
             }
             if scene_graph is not None:
                 pending = scene_graph.pending_findings()

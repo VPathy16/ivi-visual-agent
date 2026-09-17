@@ -84,7 +84,9 @@ def write_report(result: RunResult) -> None:
             f"{result.grounding.get('cv_fast_path_steps', 0)} CV fast-path / "
             f"{result.grounding.get('model_steps', 0)} model "
             f"of {result.grounding.get('total_steps', 0)} steps · "
-            f"total decision time {result.grounding.get('total_decision_seconds', 0)}s</p>"
+            f"decision {result.grounding.get('total_decision_seconds', 0)}s · "
+            f"wall {result.grounding.get('total_wall_seconds', 0)}s "
+            f"({result.grounding.get('wall_seconds_per_step', 0)}s/step)</p>"
         )
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>IVI Agent Report</title>

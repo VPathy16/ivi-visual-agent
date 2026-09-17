@@ -251,7 +251,9 @@ class AdbDevice:
         else:
             raise AdbError(f"Cannot execute action type: {action.type}")
 
-    def wait_until_stable(self, directory: Path, timeout: float) -> bool:
+    def wait_until_stable(
+        self, directory: Path, timeout: float, poll: float = 0.2
+    ) -> bool:
         deadline = time.monotonic() + timeout
         previous: int | None = None
         stable_count = 0
@@ -267,6 +269,6 @@ class AdbDevice:
             else:
                 stable_count = 0
             previous = digest
-            time.sleep(0.35)
+            time.sleep(max(0.0, poll))
         sample.unlink(missing_ok=True)
         return False
