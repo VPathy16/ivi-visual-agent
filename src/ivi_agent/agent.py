@@ -659,11 +659,29 @@ class GoalAgent:
                 decision_seconds = time.monotonic() - decision_started
                 signature = action_signature(action)
                 if signature in blocked_signatures and action.type != "wait":
-                    # Before changing strategy, check whether the OVERALL goal is
-                    # already satisfied. Fine-grained subgoals (e.g. "select a
-                    # program") may lack a clean completion signal, so the agent can
-                    # actually finish the goal while the subgoal tracker lags and
-                    # then loop. This catches that and stops cleanly.
+                    # Cheap check first: if the final subgoal's success cue is
+                    # already on screen (e.g. the goal was reached, or the run
+                    # started mid-flow with "Massage running" already showing),
+                    # finish without paying for a full model verify.
+                    final_cue = subgoal_success_cues.get(len(result.subgoals) - 1)
+                    if final_cue and subgoal_cue_satisfied(
+                        final_cue, extract_visible_text(ui_dump)
+                    ):
+                        for prior in result.subgoals:
+                            if prior.status != "passed":
+                                prior.status = "passed"
+                                prior.evidence = f"Observed on screen: {final_cue!r}"
+                        result.outcome = "pass"
+                        result.reason = f"Observed on screen: {final_cue!r}"
+                        trace.event(
+                            "verify", scope="success_cue", step=number,
+                            cue=final_cue, outcome="pass",
+                        )
+                        self.progress(f"Goal already satisfied (cue {final_cue!r})")
+                        break
+                    # Otherwise fall back to a full model verify: fine-grained
+                    # subgoals (e.g. "select a program") may lack a clean signal, so
+                    # the agent can finish the goal while the tracker lags and loop.
                     overall = self.model.verify(
                         goal,
                         image,
