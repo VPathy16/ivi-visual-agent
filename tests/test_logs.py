@@ -27,6 +27,13 @@ CLEAN = """\
 01-01 10:00:00.300 1000 1000 W SomeTag: a warning, not fatal
 """
 
+# Real emulator noise from a passing run: screencap/binder HAL SIGABRTs.
+SCREENCAP_NOISE = """\
+09-17 18:35:22.710 F/libc    ( 8204): Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 8205 (binder:8204_1), pid 8204 (screencap)
+09-17 18:35:26.380 F/libc    ( 8252): Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 8253 (binder:8252_1), pid 8252 (screencap)
+09-17 18:35:30.365 F/libc    ( 8308): Fatal signal 6 (SIGABRT), code -1 (SI_QUEUE) in tid 8309 (binder:8308_1), pid 8308 (screencap)
+"""
+
 
 class ScanCrashesTests(unittest.TestCase):
     def test_java_crash(self) -> None:
@@ -48,6 +55,22 @@ class ScanCrashesTests(unittest.TestCase):
 
     def test_clean_log_has_no_events(self) -> None:
         self.assertEqual(scan_crashes(CLEAN), [])
+
+    def test_screencap_binder_hal_noise_is_ignored(self) -> None:
+        # These are emulator infrastructure aborts, not app defects.
+        self.assertEqual(scan_crashes(SCREENCAP_NOISE), [])
+        self.assertEqual(scan_crashes(SCREENCAP_NOISE, package="com.example.iviwv"), [])
+
+    def test_app_native_crash_still_detected(self) -> None:
+        # A native crash whose process is the app under test is a real defect.
+        text = (
+            "09-17 18:35:22.710 F/libc ( 900): Fatal signal 11 (SIGSEGV), "
+            "code 1 in tid 900 (com.example.iviwv), pid 900 (com.example.iviwv)\n"
+        )
+        events = scan_crashes(text)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].kind, "native_crash")
+        self.assertEqual(events[0].package, "com.example.iviwv")
 
     def test_package_filter(self) -> None:
         events = scan_crashes(JAVA, package="com.other.app")

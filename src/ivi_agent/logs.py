@@ -4,6 +4,12 @@ A flow can look visually correct while the app crashed or hung underneath, so a
 validation run captures logcat and scans it for fatal events. This module is a
 pure text scanner (no adb/device dependency) so it is fully unit-testable; the
 agent supplies the logcat text and an optional package to attribute events to.
+
+Noise handling matters on emulators: `screencap`, `binder:*`, and HAL processes
+(``android.hardware.*``, the graphics allocator, audio) routinely abort with
+SIGABRT — infrastructure churn, not app defects (and partly provoked by the
+agent's own screenshotting). Native crashes/process-deaths from those are
+filtered out; Java crashes and ANRs (always app-level) are kept.
 """
 
 from __future__ import annotations
@@ -11,15 +17,39 @@ from __future__ import annotations
 import re
 from dataclasses import asdict, dataclass
 
-# One matcher per fatal-event class. Each captures a short signal line; the agent
-# keeps the surrounding lines for context.
 _JAVA_FATAL = re.compile(r"\bFATAL EXCEPTION\b")
 _JAVA_PROCESS = re.compile(r"AndroidRuntime:\s*Process:\s*([^\s,]+)")
 _ANR = re.compile(r"\bANR in ([^\s(]+)")
 _NATIVE_SIGNAL = re.compile(r"\bFatal signal\s+\d+\s+\(SIG[A-Z]+\)")
-_TOMBSTONE = re.compile(r"\*\*\* \*\*\* \*\*\*")
+_NATIVE_PROC = re.compile(r"\bpid\s+\d+\s*\(([^)]+)\)")
 _PROCESS_DIED = re.compile(r"Process\s+([^\s]+)\s+\(pid[^)]*\)\s+has died")
 _PKG_ANYWHERE = re.compile(r"([a-z][a-z0-9_]*(?:\.[a-z0-9_]+){2,})")
+
+# Substrings marking infrastructure/system processes whose native aborts are
+# emulator/system noise, not app-under-test defects.
+_NOISE_MARKERS = (
+    "screencap",
+    "binder:",
+    "android.hardware.",
+    ".allocator",
+    "audioserver",
+    ".audio@",
+    "hwservicemanager",
+    "servicemanager",
+    "logcat",
+    "perfetto",
+    "traced",
+    "crash_dump",
+    "tombstoned",
+    "dumpsys",
+    "vendor.qti",
+    "cameraserver",
+)
+
+
+def _is_noise(name: str) -> bool:
+    lowered = name.lower()
+    return any(marker in lowered for marker in _NOISE_MARKERS)
 
 
 @dataclass
@@ -43,9 +73,10 @@ def _package_near(lines: list[str], index: int, window: int = 6) -> str:
 def scan_crashes(logcat_text: str, package: str | None = None) -> list[CrashEvent]:
     """Return fatal events (crashes / ANRs) found in logcat text.
 
-    When ``package`` is given, only events attributable to it are returned (an
-    event with no resolvable package is kept only if the package string appears on
-    its line or a neighbor). Duplicate events on the same line/kind are collapsed.
+    Java crashes and ANRs are always app-level and always reported. Native
+    crashes and process deaths from known infrastructure/system processes are
+    filtered as noise. When ``package`` is given, only events attributable to it
+    are returned. Duplicate events on the same line/kind are collapsed.
     """
     lines = logcat_text.splitlines()
     events: list[CrashEvent] = []
@@ -64,7 +95,6 @@ def scan_crashes(logcat_text: str, package: str | None = None) -> list[CrashEven
                     pkg = proc.group(1)
                     break
             pkg = pkg or _package_near(lines, index)
-            # The exception line usually follows FATAL EXCEPTION within a few lines.
             detail = next(
                 (
                     lines[probe]
@@ -77,13 +107,19 @@ def scan_crashes(logcat_text: str, package: str | None = None) -> list[CrashEven
         elif _ANR.search(line):
             add("anr", index, _ANR.search(line).group(1), line)
         elif _NATIVE_SIGNAL.search(line):
-            add("native_crash", index, _package_near(lines, index), line)
-        elif _TOMBSTONE.search(line):
-            # Only the first tombstone header per block is interesting.
-            if not (events and events[-1].kind == "native_crash" and index - events[-1].line <= 3):
-                add("native_crash", index, _package_near(lines, index), "native tombstone")
+            proc = _NATIVE_PROC.search(line)
+            name = proc.group(1).strip() if proc else _package_near(lines, index)
+            if _is_noise(name):
+                continue  # screencap / binder / HAL abort — infrastructure noise
+            add("native_crash", index, name, line)
         elif _PROCESS_DIED.search(line):
-            add("process_death", index, _PROCESS_DIED.search(line).group(1), line)
+            name = _PROCESS_DIED.search(line).group(1)
+            if _is_noise(name):
+                continue
+            # Process death is routine churn unless it's the app under test, so it
+            # is only surfaced when a target package filter matches (below).
+            if package:
+                add("process_death", index, name, line)
 
     if package:
         pkg = package.strip()
@@ -93,7 +129,6 @@ def scan_crashes(logcat_text: str, package: str | None = None) -> list[CrashEven
                 kept.append(event)
         events = kept
 
-    # Collapse exact duplicates (same kind + line).
     seen: set[tuple[str, int]] = set()
     unique: list[CrashEvent] = []
     for event in events:
