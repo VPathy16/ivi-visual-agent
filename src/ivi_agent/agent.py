@@ -336,6 +336,10 @@ class GoalAgent:
         history: list[dict[str, object]] = []
         failed_action_memory: list[tuple[int, set[tuple[object, ...]]]] = []
         current_subgoal_index = 0
+        # Carry the post-action observation forward as the next step's start
+        # observation, so we don't re-capture + re-`uiautomator dump` the same
+        # screen twice per step. (image_bytes, ui_dump, perceptual_hash).
+        carried_observation: tuple[bytes, str, int] | None = None
 
         try:
             self.device.ensure_ready()
@@ -417,13 +421,25 @@ class GoalAgent:
                     break
                 screenshot_name = f"step-{number:02d}.png"
                 screenshot_path = directory / screenshot_name
-                self.progress(f"Step {number}: capturing device state")
-                image = self.device.capture(screenshot_path)
-                try:
-                    ui_dump = self.device.ui_dump()
-                except Exception:
-                    ui_dump = ""
-                screen_hash = perceptual_hash(image)
+                if carried_observation is not None and getattr(
+                    self.config, "reuse_after_state", True
+                ):
+                    # Reuse the previous step's post-action screen instead of a
+                    # fresh capture + uiautomator dump (same screen, no round-trip).
+                    image, ui_dump, screen_hash = carried_observation
+                    try:
+                        screenshot_path.write_bytes(image)
+                    except Exception:  # noqa: BLE001 - screenshot is evidence only
+                        pass
+                else:
+                    self.progress(f"Step {number}: capturing device state")
+                    image = self.device.capture(screenshot_path)
+                    try:
+                        ui_dump = self.device.ui_dump()
+                    except Exception:
+                        ui_dump = ""
+                    screen_hash = perceptual_hash(image)
+                carried_observation = None
                 blocked_signatures = blocked_actions_for_state(
                     failed_action_memory, screen_hash
                 )
@@ -809,6 +825,9 @@ class GoalAgent:
                 except Exception:
                     after_ui = ""
                 step.screen_changed = screen_made_progress(before, after, ui_dump, after_ui)
+                # This post-action screen is the next step's start observation;
+                # carry it forward to skip a duplicate capture + uiautomator dump.
+                carried_observation = (after_image, after_ui, after)
                 trace.event(
                     "execute",
                     step=number,

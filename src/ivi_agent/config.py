@@ -19,6 +19,10 @@ class Config:
     # faster; raise it for animation-heavy IVIs. See settle_poll_seconds.
     settle_timeout_seconds: float = 2.0
     settle_poll_seconds: float = 0.2
+    # Reuse the post-action screen as the next step's start observation, avoiding
+    # a duplicate screenshot + uiautomator dump per step. Set false to force a
+    # fresh capture each step.
+    reuse_after_state: bool = True
     prefer_ui_tree: bool = True
     enable_ocr: bool = True
     max_image_dimension: int = 768
