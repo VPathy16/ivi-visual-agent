@@ -8,6 +8,11 @@ North star: *don't build a better phone agent — build the AI validation engine
 for the whole cockpit.* Keep it **local/offline** by default; that's the moat a
 general phone-automation tool can't follow.
 
+> For the full technical study behind this backlog — what a *true* Android IVI
+> validation agent requires (oracles, traceability, cockpit dimensions,
+> standards, maturity L0→L4) — see
+> [../research/android-ivi-validation-agent.md](../research/android-ivi-validation-agent.md).
+
 ## Priority backlog
 
 | # | Idea | Why | Effort | Detail |

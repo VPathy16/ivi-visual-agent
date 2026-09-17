@@ -835,7 +835,9 @@ vehicle state, system logs) append as their own event kinds — see the design f
 operator-declared state probes, CCF divergence checks, recovery hooks, and MCP:
 [docs/future-upgrades/probes-commands-and-mcp.md](docs/future-upgrades/probes-commands-and-mcp.md).
 The full backlog of planned upgrades lives in
-[docs/future-upgrades/](docs/future-upgrades/README.md).
+[docs/future-upgrades/](docs/future-upgrades/README.md), and the technical study
+of what a *true* Android IVI validation agent requires is in
+[docs/research/android-ivi-validation-agent.md](docs/research/android-ivi-validation-agent.md).
 
 The `runs/` directory is intentionally ignored by Git because it can grow quickly.
 
