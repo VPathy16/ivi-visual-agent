@@ -341,18 +341,33 @@ class GoalAgent:
         # observation, so we don't re-capture + re-`uiautomator dump` the same
         # screen twice per step. (image_bytes, ui_dump, perceptual_hash).
         carried_observation: tuple[bytes, str, int] | None = None
+        # Wall-time by phase, so a slow run points at its own culprit (startup
+        # device I/O, retrieval, per-step capture / uiautomator dump / settle,
+        # teardown) instead of leaving only an opaque total. The dict is handed
+        # to result.grounding by reference, so phases timed after that (logcat)
+        # still appear.
+        phase_seconds: dict[str, float] = {}
+
+        def _add_phase(name: str, started_at: float) -> None:
+            phase_seconds[name] = round(
+                phase_seconds.get(name, 0.0) + (time.monotonic() - started_at), 3
+            )
 
         try:
+            _phase = time.monotonic()
             self.device.ensure_ready()
             self.device.wake_if_needed()
             if getattr(self.config, "capture_logs", True):
                 self.device.clear_logcat()
             size = self.device.screen_size()
+            _add_phase("startup", _phase)
+            _phase = time.monotonic()
             initial_knowledge = (
                 self.knowledge.query(goal, self.config.knowledge_top_k)
                 if self.knowledge
                 else {}
             )
+            _add_phase("retrieval", _phase)
             initial_context = prompt_context(initial_knowledge) if initial_knowledge else {}
             if initial_knowledge:
                 result.knowledge = {
@@ -375,7 +390,9 @@ class GoalAgent:
                     chunk_ids=result.knowledge["retrieved_chunk_ids"],
                 )
             self.progress("Planning observable subgoals")
+            _phase = time.monotonic()
             plan = self.model.create_plan(goal, initial_context)
+            _add_phase("planning", _phase)
             result.subgoals = [
                 SubgoalRecord(number=index + 1, description=description)
                 for index, description in enumerate(plan)
@@ -436,11 +453,15 @@ class GoalAgent:
                         pass
                 else:
                     self.progress(f"Step {number}: capturing device state")
+                    _phase = time.monotonic()
                     image = self.device.capture(screenshot_path)
+                    _add_phase("capture", _phase)
+                    _phase = time.monotonic()
                     try:
                         ui_dump = self.device.ui_dump()
                     except Exception:
                         ui_dump = ""
+                    _add_phase("ui_dump", _phase)
                     screen_hash = perceptual_hash(image)
                 carried_observation = None
                 blocked_signatures = blocked_actions_for_state(
@@ -833,18 +854,24 @@ class GoalAgent:
 
                 before = screen_hash
                 self.device.execute(action, size)
+                _phase = time.monotonic()
                 self.device.wait_until_stable(
                     directory,
                     self.config.settle_timeout_seconds,
                     getattr(self.config, "settle_poll_seconds", 0.2),
                 )
+                _add_phase("settle", _phase)
                 check_path = directory / f"step-{number:02d}-after.png"
+                _phase = time.monotonic()
                 after_image = self.device.capture(check_path)
+                _add_phase("capture", _phase)
                 after = perceptual_hash(after_image)
+                _phase = time.monotonic()
                 try:
                     after_ui = self.device.ui_dump()
                 except Exception:
                     after_ui = ""
+                _add_phase("ui_dump", _phase)
                 step.screen_changed = screen_made_progress(before, after, ui_dump, after_ui)
                 # This post-action screen is the next step's start observation;
                 # carry it forward to skip a duplicate capture + uiautomator dump.
@@ -963,6 +990,9 @@ class GoalAgent:
                 # the model/CV part. The gap is capture + settle + verify overhead.
                 "total_wall_seconds": round(wall_total, 3),
                 "wall_seconds_per_step": round(wall_total / steps_done, 3) if steps_done else 0.0,
+                # Per-phase wall breakdown (same dict object mutated below for
+                # teardown phases like logcat), so a slow run is self-diagnosing.
+                "phase_seconds": phase_seconds,
             }
             if scene_graph is not None:
                 pending = scene_graph.pending_findings()
@@ -993,9 +1023,11 @@ class GoalAgent:
             # write logcat.txt for debugging, and surface any fatal events.
             if getattr(self.config, "capture_logs", True):
                 try:
+                    _phase = time.monotonic()
                     logcat_text = self.device.logcat_dump(
                         getattr(self.config, "log_tail_lines", 4000)
                     )
+                    _add_phase("logcat_dump", _phase)
                     if logcat_text:
                         try:
                             (directory / "logcat.txt").write_text(
