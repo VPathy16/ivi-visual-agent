@@ -44,6 +44,44 @@ def screen_made_progress(
     return set(extract_visible_text(before_ui)) != set(extract_visible_text(after_ui))
 
 
+def map_subgoal_success_cues(
+    subgoals: list, task_data: dict | None
+) -> dict[int, str]:
+    """Map subgoal index -> a `success_text` cue from the matching manual step.
+
+    A manual task step may declare ``success_text``: a substring that, once
+    visible on screen, means that step is complete. Subgoals are matched to steps
+    by normalized milestone text (the planner derives subgoals from the same
+    milestones). This lets an in-screen state change (e.g. a program becoming
+    selected) advance a subgoal, not just a screen-title change.
+    """
+    cues: dict[int, str] = {}
+    if not isinstance(task_data, dict):
+        return cues
+    by_milestone: dict[str, str] = {}
+    for step in task_data.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        cue = step.get("success_text")
+        milestone = step.get("milestone", step.get("expected", ""))
+        if cue and milestone:
+            key = " ".join(re.findall(r"[a-z0-9]+", str(milestone).lower()))
+            if key:
+                by_milestone[key] = str(cue)
+    for index, subgoal in enumerate(subgoals):
+        key = " ".join(re.findall(r"[a-z0-9]+", subgoal.description.lower()))
+        if key in by_milestone:
+            cues[index] = by_milestone[key]
+    return cues
+
+
+def subgoal_cue_satisfied(cue: str, visible_text: list[str]) -> bool:
+    """True if the step's success cue is present in the visible screen text."""
+    if not cue:
+        return False
+    return cue.lower() in " ".join(visible_text).lower()
+
+
 def action_signature(action: object) -> tuple[object, ...]:
     action_type = getattr(action, "type", None)
     target = " ".join(
@@ -271,6 +309,20 @@ class GoalAgent:
             )
             trace.event(
                 "plan", subgoals=[item.description for item in result.subgoals]
+            )
+            # Per-subgoal completion cues from the manual task steps, so an
+            # in-screen state change (e.g. a program becoming selected) can
+            # advance a subgoal instead of the model re-tapping it.
+            task_chunk = next(
+                (
+                    chunk
+                    for chunk in (initial_knowledge.get("chunks", []) if initial_knowledge else [])
+                    if chunk.get("kind") == "task"
+                ),
+                None,
+            )
+            subgoal_success_cues = map_subgoal_success_cues(
+                result.subgoals, task_chunk.get("data") if task_chunk else None
             )
             for number in range(1, self.config.max_actions + 1):
                 if time.monotonic() >= deadline:
@@ -662,7 +714,37 @@ class GoalAgent:
                         "screen_changed": step.screen_changed,
                     }
                 )
-                if not step.screen_changed:
+                # Advance an in-screen subgoal when its manual-declared success cue
+                # is now visible (e.g. a program becoming "Selected"), so the agent
+                # moves on instead of re-tapping the same control.
+                advanced_by_cue = False
+                if current_subgoal_index < len(result.subgoals) - 1:
+                    cue = subgoal_success_cues.get(current_subgoal_index)
+                    if cue and subgoal_cue_satisfied(cue, extract_visible_text(after_ui)):
+                        current_subgoal.status = "passed"
+                        current_subgoal.evidence = f"Observed on screen: {cue!r}"
+                        history.append(
+                            {
+                                "completed_subgoal": current_subgoal.description,
+                                "evidence": current_subgoal.evidence,
+                                "next_subgoal": result.subgoals[current_subgoal_index + 1].description,
+                            }
+                        )
+                        current_subgoal_index += 1
+                        result.subgoals[current_subgoal_index].status = "running"
+                        trace.event(
+                            "subgoal_advanced",
+                            step=number,
+                            via="success_cue",
+                            cue=cue,
+                            next=result.subgoals[current_subgoal_index].description,
+                        )
+                        self.progress(
+                            f"Subgoal advanced via observed cue {cue!r}; "
+                            f"now pursuing {result.subgoals[current_subgoal_index].description!r}"
+                        )
+                        advanced_by_cue = True
+                if not step.screen_changed and not advanced_by_cue:
                     remember_failed_action(
                         failed_action_memory, screen_hash, signature
                     )
