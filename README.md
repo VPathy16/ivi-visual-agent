@@ -373,7 +373,9 @@ model training and stores no fixed tap coordinates.
 - [Editable sample manual folder](examples/custom-ivi-manual/)
 - [Sample custom-IVI RAG manual](output/pdf/sample-custom-ivi-rag-manual.pdf)
 
-Create a manual for a custom UI:
+Create a manual for a custom UI (full authoring guide:
+[docs/creating-a-manual.md](docs/creating-a-manual.md) — schema, icon crops for
+the CV fast-path, scene-graph edges, and step cues):
 
 ```bash
 python -m pip install -e '.[docs]'
@@ -712,7 +714,9 @@ the OEM's documentation.
 Proprietary icons (climate zones, seat massage, drive modes) are the main
 recognition risk. Give the agent an icon/step reference it can retrieve:
 
-A ready-made scaffold ships at [`examples/benz-mbux-manual/`](examples/benz-mbux-manual/)
+See [docs/creating-a-manual.md](docs/creating-a-manual.md) for the full manual
+authoring guide (schema, icon crops to maximize CV fast-path coverage, scene-graph
+edges, and step cues). A ready-made scaffold ships at [`examples/benz-mbux-manual/`](examples/benz-mbux-manual/)
 (home, vehicle settings, climate, seat-massage screens + icons, with placeholder
 crops to replace). See its README for details.
 
