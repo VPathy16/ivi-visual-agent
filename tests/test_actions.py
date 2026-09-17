@@ -2,6 +2,7 @@ import io
 import json
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
 from unittest import mock
 
 from PIL import Image
@@ -119,6 +120,51 @@ class CaptureDisplayIdTests(unittest.TestCase):
 
     def test_default_picks_primary(self) -> None:
         self.assertEqual(_DumpsysDevice().capture_display_id(), 4619827259835644672)
+
+
+class _MultiDisplayDevice(AdbDevice):
+    """Mimics a multi-display AVD: plain `screencap` hangs (times out to an
+    AdbError), only the targeted `-d <physical id>` capture returns a PNG."""
+
+    DUMP = "Display 4619827259835644672 (HWC display 0): port=0 ...\n"
+
+    def __init__(self, png: bytes) -> None:
+        super().__init__(serial="emulator-5554")
+        self._png = png
+        self.plain_screencaps = 0
+
+    def _run(self, *args, binary=False, timeout=20):  # type: ignore[override]
+        if args[:2] == ("shell", "dumpsys"):
+            return self.DUMP
+        if args[:1] == ("exec-out",) and "screencap" in args:
+            if "-d" in args:
+                return self._png
+            self.plain_screencaps += 1
+            raise AdbError("ADB command timed out")
+        if args[:2] == ("shell", "wm"):
+            return "Physical size: 1080x2400\n"
+        return b"" if binary else ""
+
+
+class TargetedCaptureTests(unittest.TestCase):
+    def _png(self) -> bytes:
+        buf = io.BytesIO()
+        Image.new("RGB", (2400, 1080), "black").save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_screen_size_uses_targeted_display_without_touching_plain(self) -> None:
+        device = _MultiDisplayDevice(self._png())
+        # Resolves via `-d`, so it must never fall to the hanging plain screencap.
+        self.assertEqual(device.screen_size(), (2400, 1080))
+        self.assertEqual(device.plain_screencaps, 0)
+
+    def test_capture_uses_targeted_display_without_touching_plain(self) -> None:
+        device = _MultiDisplayDevice(self._png())
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            device.capture(Path(tmp) / "shot.png")
+        self.assertEqual(device.plain_screencaps, 0)
 
 
 class AdbExecutionTests(unittest.TestCase):

@@ -64,24 +64,54 @@ class AdbDevice:
         self._run("shell", "input", "keyevent", "KEYCODE_HOME", timeout=10)
         time.sleep(0.5)
 
+    def _screencap_png(
+        self, *, targeted_timeout: float = 20.0, plain_timeout: float = 8.0
+    ) -> bytes | None:
+        """Grab a PNG framebuffer, preferring the resolved physical display.
+
+        On multi-display emulators a plain ``screencap -p`` targets a display
+        that yields no data and hangs until its timeout, so the targeted
+        ``-d <physical id>`` path (which such emulators accept) is tried first.
+        The plain fallback is given a *short* timeout on purpose: when it is the
+        one that hangs, that hang must not cost the whole run its full timeout.
+        Returns the PNG bytes, or ``None`` when neither path produced one.
+        """
+        capture_display_id = self.capture_display_id()
+        if capture_display_id is not None:
+            try:
+                candidate = self._run(
+                    "exec-out", "screencap", "-p", "-d", str(capture_display_id),
+                    binary=True, timeout=targeted_timeout,
+                )
+            except AdbError:
+                candidate = b""
+            if isinstance(candidate, bytes) and candidate.startswith(b"\x89PNG"):
+                return candidate
+        try:
+            candidate = self._run(
+                "exec-out", "screencap", "-p", binary=True, timeout=plain_timeout
+            )
+        except AdbError:
+            return None
+        if isinstance(candidate, bytes) and candidate.startswith(b"\x89PNG"):
+            return candidate
+        return None
+
     def screen_size(self) -> tuple[int, int]:
         # Use the CURRENT framebuffer dimensions (from a screenshot) so tap
         # coordinates match the live orientation. `wm size` reports the physical,
         # unrotated size (e.g. 1080x2400), which is transposed in landscape and
         # makes normalized taps miss on rotated IVI/Automotive displays.
-        try:
-            image = self._run("exec-out", "screencap", "-p", binary=True, timeout=30)
-            if (
-                isinstance(image, bytes)
-                and image[:8] == b"\x89PNG\r\n\x1a\n"
-                and len(image) >= 24
-            ):
-                width = int.from_bytes(image[16:20], "big")
-                height = int.from_bytes(image[20:24], "big")
-                if width > 0 and height > 0:
-                    return width, height
-        except AdbError:
-            pass
+        image = self._screencap_png()
+        if (
+            isinstance(image, bytes)
+            and image[:8] == b"\x89PNG\r\n\x1a\n"
+            and len(image) >= 24
+        ):
+            width = int.from_bytes(image[16:20], "big")
+            height = int.from_bytes(image[20:24], "big")
+            if width > 0 and height > 0:
+                return width, height
         output = str(self._run("shell", "wm", "size"))
         matches = re.findall(r"(\d+)x(\d+)", output)
         if not matches:
@@ -128,27 +158,13 @@ class AdbDevice:
         return self._resolved_capture_display_id
 
     def capture(self, destination: Path) -> bytes:
-        capture_display_id = self.capture_display_id()
-        image: bytes | None = None
-        if capture_display_id is not None:
-            # Some (multi-display) emulators reject `screencap -d <id>` and return
-            # an error string instead of a PNG. Try the targeted capture, but fall
-            # back to a plain screencap (which screen_size() relies on) rather than
-            # failing the run.
-            candidate = self._run(
-                "exec-out", "screencap", "-p", "-d", str(capture_display_id),
-                binary=True, timeout=30,
-            )
-            if isinstance(candidate, bytes) and candidate.startswith(b"\x89PNG"):
-                image = candidate
-        if image is None:
-            candidate = self._run("exec-out", "screencap", "-p", binary=True, timeout=30)
-            if isinstance(candidate, bytes) and candidate.startswith(b"\x89PNG"):
-                image = candidate
+        # Prefer the resolved physical display, with a short plain fallback, so a
+        # multi-display emulator's hanging plain `screencap` can't stall the run.
+        image = self._screencap_png()
         if image is None:
             raise AdbError(
                 "ADB returned invalid screenshot data (tried "
-                f"display id {capture_display_id} and default display)"
+                f"display id {self._resolved_capture_display_id} and default display)"
             )
         destination.write_bytes(image)
         return image
