@@ -17,7 +17,10 @@ class AdbDevice:
     def __init__(self, serial: str | None = None, display_id: int | None = None) -> None:
         self.serial = serial
         self.display_id = display_id
-        self._resolved_capture_display_id: int | None = display_id
+        # Resolved lazily: a user-supplied display_id may be an HWC index (0, 1)
+        # that screencap can't use directly on multi-display emulators, so it is
+        # mapped to a physical display id in capture_display_id().
+        self._resolved_capture_display_id: int | None = None
 
     def _base(self) -> list[str]:
         command = ["adb"]
@@ -87,19 +90,41 @@ class AdbDevice:
         return int(width), int(height)
 
     def capture_display_id(self) -> int | None:
+        """Resolve the physical display id `screencap -d` needs.
+
+        `screencap -d` wants a physical display id (a large number on emulators),
+        not an HWC index. So a user-supplied ``--display-id 0`` is treated as an
+        HWC index and mapped to its physical id; a value that already matches a
+        physical id is kept; a primary (HWC 0) physical id is chosen when nothing
+        was supplied. Falls back to the supplied value when SurfaceFlinger can't
+        be read.
+        """
         if self._resolved_capture_display_id is not None:
             return self._resolved_capture_display_id
         try:
             output = str(
                 self._run("shell", "dumpsys", "SurfaceFlinger", "--display-id", timeout=10)
             )
+            matches = re.findall(r"Display\s+(\d+)\s+\(HWC display\s+(\d+)\)", output)
         except AdbError:
+            matches = []
+
+        chosen: str | None = None
+        if self.display_id is not None:
+            want = str(self.display_id)
+            physical_ids = {display for display, _ in matches}
+            if want in physical_ids:
+                chosen = want  # already a physical id
+            else:
+                chosen = next((display for display, hwc in matches if hwc == want), None)
+                if chosen is None:
+                    chosen = want  # best effort: pass through as given
+        elif matches:
+            chosen = next((display for display, hwc in matches if hwc == "0"), matches[0][0])
+
+        if chosen is None:
             return None
-        matches = re.findall(r"Display\s+(\d+)\s+\(HWC display\s+(\d+)\)", output)
-        if not matches:
-            return None
-        primary = next((display for display, hwc in matches if hwc == "0"), matches[0][0])
-        self._resolved_capture_display_id = int(primary)
+        self._resolved_capture_display_id = int(chosen)
         return self._resolved_capture_display_id
 
     def capture(self, destination: Path) -> bytes:
