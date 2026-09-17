@@ -75,6 +75,11 @@ class Config:
     cv_fast_path: bool = False
     cv_match_threshold: float = 0.75
     cv_min_retrieval_score: float = 2.0
+    # Accessibility fast-path: when the current subgoal's target control name
+    # matches a single clickable element in the live UI tree, tap it directly
+    # (no model, no CV). The fastest grounding when an a11y tree is present;
+    # a no-op (falls through) when nothing matches uniquely.
+    accessibility_fast_path: bool = True
     # Structured run trace. When enabled, each run also writes events.jsonl (the
     # ordered event stream), agent.log (human-readable), task.json, and plan.json
     # into the run directory — the backbone for replay, diagnostics, and an

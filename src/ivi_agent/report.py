@@ -16,7 +16,7 @@ def write_report(result: RunResult) -> None:
     for step in result.steps:
         action = step.action
         decision = f"{step.decision_seconds:.2f}s" if step.decision_seconds is not None else "—"
-        ground = "CV" if step.grounded_by == "cv" else "model"
+        ground = {"cv": "CV", "a11y": "A11y"}.get(step.grounded_by, "model")
         step_rows.append(
             "<tr>"
             f"<td>{step.number}</td>"
@@ -81,7 +81,8 @@ def write_report(result: RunResult) -> None:
     if result.grounding:
         grounding_summary = (
             "<p><strong>Grounding:</strong> "
-            f"{result.grounding.get('cv_fast_path_steps', 0)} CV fast-path / "
+            f"{result.grounding.get('accessibility_fast_path_steps', 0)} a11y / "
+            f"{result.grounding.get('cv_fast_path_steps', 0)} CV / "
             f"{result.grounding.get('model_steps', 0)} model "
             f"of {result.grounding.get('total_steps', 0)} steps · "
             f"decision {result.grounding.get('total_decision_seconds', 0)}s · "

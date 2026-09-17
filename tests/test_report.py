@@ -55,9 +55,9 @@ class GroundingTelemetryTests(unittest.TestCase):
         result = self._result()
         write_report(result)
         html = (Path(result.run_directory) / "report.html").read_text()
-        self.assertIn("Grounded by", html)       # table column
-        self.assertIn("CV fast-path", html)       # summary line
-        self.assertIn("1 CV fast-path / 1 model", html)
+        self.assertIn("Grounded by", html)          # table column
+        self.assertIn("Grounding:", html)           # summary line
+        self.assertIn("1 CV / 1 model", html)
 
 
 if __name__ == "__main__":

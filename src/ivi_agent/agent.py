@@ -13,6 +13,7 @@ from .knowledge import KnowledgeBase, prompt_context, reference_images
 from .perception import (
     extract_ocr_screen_titles,
     extract_screen_titles,
+    extract_ui_elements,
     extract_visible_text,
     hash_distance,
     perceptual_hash,
@@ -21,7 +22,7 @@ from .graph import SceneGraph
 from .policy import PolicyViolation, validate_action
 from .report import write_report
 from .trace import NullTrace, RunTrace
-from .types import RunResult, StepRecord, SubgoalRecord
+from .types import Action, RunResult, StepRecord, SubgoalRecord
 from .vision_match import cv_ground_from_knowledge
 
 
@@ -42,6 +43,79 @@ def screen_made_progress(
     if hash_distance(before_hash, after_hash) > maximum_distance:
         return True
     return set(extract_visible_text(before_ui)) != set(extract_visible_text(after_ui))
+
+
+_TARGET_STOPWORDS = {
+    "tile", "button", "the", "a", "an", "screen", "icon", "open", "tap", "to",
+    "activate", "select", "press", "program", "card", "row", "menu", "option",
+}
+
+
+def target_keywords(name: str) -> set[str]:
+    """Distinctive tokens of a control name for accessibility-tree matching."""
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", str(name).lower())
+        if token not in _TARGET_STOPWORDS
+    }
+
+
+def map_subgoal_targets(
+    subgoals: list, task_data: dict | None, control_names: dict[str, str]
+) -> dict[int, set[str]]:
+    """Map subgoal index -> target-control keywords (for the a11y fast-path).
+
+    Aligns each subgoal to its manual step by milestone, resolves the step's
+    ``target`` control id to its name, and reduces that to distinctive keywords.
+    """
+    targets: dict[int, set[str]] = {}
+    if not isinstance(task_data, dict):
+        return targets
+    by_milestone: dict[str, str] = {}
+    for step in task_data.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        milestone = step.get("milestone", step.get("expected", ""))
+        control_id = step.get("target")
+        if milestone and control_id:
+            key = " ".join(re.findall(r"[a-z0-9]+", str(milestone).lower()))
+            if key:
+                by_milestone[key] = str(control_id)
+    for index, subgoal in enumerate(subgoals):
+        key = " ".join(re.findall(r"[a-z0-9]+", subgoal.description.lower()))
+        control_id = by_milestone.get(key)
+        if control_id:
+            keywords = target_keywords(control_names.get(control_id, control_id))
+            if keywords:
+                targets[index] = keywords
+    return targets
+
+
+def resolve_target_in_tree(ui_dump: str, keywords: set[str]) -> tuple[float, float] | None:
+    """Return the normalized center of the clickable element matching keywords.
+
+    Matches only when a single actionable element's label contains all target
+    keywords (preferring an exact token match on ties); returns None when absent
+    or ambiguous, so the caller falls back to CV / the model.
+    """
+    if not keywords or not ui_dump:
+        return None
+    elements = extract_ui_elements(ui_dump)
+    matches = [
+        element
+        for element in elements
+        if keywords <= set(re.findall(r"[a-z0-9]+", element.label.lower()))
+    ]
+    if len(matches) == 1:
+        return matches[0].center
+    exact = [
+        element
+        for element in matches
+        if set(re.findall(r"[a-z0-9]+", element.label.lower())) == keywords
+    ]
+    if len(exact) == 1:
+        return exact[0].center
+    return None
 
 
 def map_subgoal_success_cues(
@@ -324,6 +398,19 @@ class GoalAgent:
             subgoal_success_cues = map_subgoal_success_cues(
                 result.subgoals, task_chunk.get("data") if task_chunk else None
             )
+            # Control id -> name across all known screens, for the a11y fast-path.
+            control_names: dict[str, str] = {}
+            if self.knowledge is not None:
+                for chunk in self.knowledge.chunks:
+                    if chunk.get("kind") == "screen" and isinstance(chunk.get("data"), dict):
+                        for control in chunk["data"].get("controls", []) or []:
+                            if isinstance(control, dict) and control.get("id"):
+                                control_names[str(control["id"])] = str(control.get("name", ""))
+            subgoal_targets = map_subgoal_targets(
+                result.subgoals,
+                task_chunk.get("data") if task_chunk else None,
+                control_names,
+            )
             for number in range(1, self.config.max_actions + 1):
                 if time.monotonic() >= deadline:
                     result.reason = "Run timeout reached"
@@ -497,7 +584,32 @@ class GoalAgent:
                 # model whenever the match is weak, blocked, or policy-rejected.
                 action = None
                 grounded_by = "model"
-                if self.config.cv_fast_path and step_knowledge:
+                # Fastest path: the current subgoal's target control is a single
+                # clickable element in the live tree -> tap it directly.
+                if getattr(self.config, "accessibility_fast_path", True) and ui_dump:
+                    keywords = subgoal_targets.get(current_subgoal_index)
+                    hit = resolve_target_in_tree(ui_dump, keywords) if keywords else None
+                    if hit is not None:
+                        cand = Action(
+                            type="tap",
+                            confidence=1.0,
+                            reason=f"accessibility tree match {sorted(keywords)}",
+                            target=" ".join(sorted(keywords)),
+                            x=hit[0],
+                            y=hit[1],
+                        )
+                        if action_signature(cand) not in blocked_signatures:
+                            try:
+                                validate_action(cand, self.config, goal)
+                                action = cand
+                                grounded_by = "a11y"
+                                self.progress(
+                                    f"Step {number}: accessibility fast-path tapped "
+                                    f"{cand.target!r}; skipping model"
+                                )
+                            except PolicyViolation:
+                                action = None
+                if action is None and self.config.cv_fast_path and step_knowledge:
                     candidate = cv_ground_from_knowledge(
                         image, step_knowledge, self.config
                     )
@@ -778,7 +890,10 @@ class GoalAgent:
             finished = datetime.now(timezone.utc)
             result.finished_at = finished.isoformat()
             cv_steps = sum(1 for step in result.steps if step.grounded_by == "cv")
-            model_steps = sum(1 for step in result.steps if step.grounded_by != "cv")
+            a11y_steps = sum(1 for step in result.steps if step.grounded_by == "a11y")
+            model_steps = sum(
+                1 for step in result.steps if step.grounded_by not in ("cv", "a11y")
+            )
             decision_total = sum(
                 step.decision_seconds or 0.0 for step in result.steps
             )
@@ -786,6 +901,7 @@ class GoalAgent:
             steps_done = len(result.steps)
             result.grounding = {
                 "cv_fast_path_steps": cv_steps,
+                "accessibility_fast_path_steps": a11y_steps,
                 "model_steps": model_steps,
                 "total_steps": steps_done,
                 "total_decision_seconds": round(decision_total, 3),
