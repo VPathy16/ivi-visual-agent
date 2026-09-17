@@ -50,6 +50,33 @@ def write_report(result: RunResult) -> None:
             f"<br><strong>Manual:</strong> {html.escape(str(result.knowledge.get('manual_id', '')))}"
             f"<br><strong>Retrieved:</strong> {chunk_ids}</p>"
         )
+    scene_graph_html = ""
+    if result.scene_graph:
+        cov = result.scene_graph.get("coverage", {})
+        findings = result.scene_graph.get("pending_findings", [])
+        finding_rows = "".join(
+            "<tr>"
+            f"<td>{html.escape(str(f.get('id', '')))}</td>"
+            f"<td>{html.escape(str(f.get('kind', '')))}</td>"
+            f"<td>{html.escape(str(f.get('detail', '')))}</td>"
+            "</tr>"
+            for f in findings
+        )
+        findings_table = (
+            "<table><thead><tr><th>Finding</th><th>Kind</th><th>Detail (needs review)</th>"
+            f"</tr></thead><tbody>{finding_rows}</tbody></table>"
+            if findings
+            else "<p>No divergences pending review.</p>"
+        )
+        scene_graph_html = (
+            "<h2>Scene graph (HMI vs. manual)</h2>"
+            f"<p><strong>Confirmed:</strong> {cov.get('confirmed_screens', 0)}"
+            f"/{cov.get('manual_screens', 0)} documented screens · "
+            f"<strong>Undocumented reached:</strong> {cov.get('observed_new_screens', 0)} · "
+            f"<strong>Defects:</strong> {cov.get('defects', 0)} · "
+            f"<strong>Pending review:</strong> {cov.get('pending_findings', 0)}</p>"
+            f"{findings_table}"
+        )
     grounding_summary = ""
     if result.grounding:
         grounding_summary = (
@@ -73,6 +100,7 @@ img{{width:280px;height:auto}} th{{background:#f4f4f4}}
 <p>{html.escape(result.reason)}</p>
 <p>{html.escape(result.started_at)} — {html.escape(result.finished_at)}</p>
 {knowledge}
+{scene_graph_html}
 <h2>Subgoals</h2>
 <table><thead><tr><th>#</th><th>Milestone</th><th>Status</th><th>Evidence</th></tr></thead>
 <tbody>{subgoal_rows}</tbody></table>

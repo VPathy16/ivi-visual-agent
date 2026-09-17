@@ -87,6 +87,9 @@ class RunResult:
     steps: list[StepRecord] = field(default_factory=list)
     # Populated at finish: counts of how steps were grounded and decision time.
     grounding: dict[str, Any] = field(default_factory=dict)
+    # Populated at finish when a scene graph is active: coverage + pending
+    # divergence findings (candidate HMI defects awaiting user review).
+    scene_graph: dict[str, Any] = field(default_factory=dict)
     started_at: str = ""
     finished_at: str = ""
 

@@ -77,6 +77,12 @@ class Config:
     # into the run directory — the backbone for replay, diagnostics, and an
     # engineer report. Best-effort; never aborts a run.
     trace: bool = True
+    # Living scene graph. When a knowledge profile is active, seed an expected
+    # screen graph from the manual, then confirm nodes/edges as the agent reaches
+    # screens and flag screens/transitions that diverge from the manual as
+    # pending-review findings (candidate HMI defects). Persisted per profile and
+    # grown across runs. No-op without a knowledge profile.
+    scene_graph: bool = True
 
     def __post_init__(self) -> None:
         if self.protected_regions is None:

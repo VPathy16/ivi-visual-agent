@@ -17,6 +17,7 @@ from .perception import (
     hash_distance,
     perceptual_hash,
 )
+from .graph import SceneGraph
 from .policy import PolicyViolation, validate_action
 from .report import write_report
 from .trace import NullTrace, RunTrace
@@ -190,6 +191,35 @@ class GoalAgent:
             },
         )
         trace.event("run_start", goal=goal, run_id=run_id, dry_run=dry_run)
+
+        # Living scene graph: seed the expected model from the manual (once),
+        # then confirm/grow it as screens are reached. Persisted per profile.
+        scene_graph: SceneGraph | None = None
+        scene_graph_path: Path | None = None
+        if getattr(self.config, "scene_graph", True) and self.knowledge is not None:
+            try:
+                manual = {
+                    "screens": [
+                        chunk["data"]
+                        for chunk in self.knowledge.chunks
+                        if chunk.get("kind") == "screen"
+                        and isinstance(chunk.get("data"), dict)
+                    ]
+                }
+                scene_graph_path = self.knowledge.directory / "scene_graph.json"
+                scene_graph = SceneGraph.load_or_seed(scene_graph_path, manual)
+                trace.event(
+                    "graph_seeded",
+                    screens=len(scene_graph.nodes),
+                    edges=len(scene_graph.edges),
+                    persisted=scene_graph_path.is_file(),
+                )
+            except Exception as exc:  # noqa: BLE001 - graph is advisory, never fatal
+                self.progress(f"scene graph unavailable: {exc}")
+                scene_graph = None
+        graph_prev_node: str | None = None
+        graph_last_action: tuple[str, str] = ("", "")  # (action_type, target)
+
         deadline = time.monotonic() + self.config.timeout_seconds
         history: list[dict[str, object]] = []
         failed_action_memory: list[tuple[int, set[tuple[object, ...]]]] = []
@@ -289,6 +319,42 @@ class GoalAgent:
                     if step_knowledge
                     else [],
                 )
+
+                # Grow the living scene graph with the screen we just reached,
+                # attributing the transition to the previous step's action.
+                if scene_graph is not None:
+                    observation = scene_graph.observe(
+                        observed_titles,
+                        phash=screen_hash,
+                        screenshot=screenshot_name,
+                        run_id=run_id,
+                        came_from=graph_prev_node,
+                        via_action=graph_last_action[0],
+                        via_target=graph_last_action[1],
+                    )
+                    graph_prev_node = observation.node_id
+                    trace.event(
+                        "graph_observe",
+                        step=number,
+                        node=observation.node_id,
+                        matched=observation.matched,
+                        new_node=observation.is_new_node,
+                        titles=observed_titles,
+                    )
+                    if observation.finding is not None:
+                        self.progress(
+                            f"⚠ HMI divergence ({observation.finding.kind}): "
+                            f"{observation.finding.detail} — flagged for review "
+                            f"[{observation.finding.id}]"
+                        )
+                        trace.event(
+                            "graph_divergence",
+                            step=number,
+                            finding=observation.finding.id,
+                            kind=observation.finding.kind,
+                            detail=observation.finding.detail,
+                        )
+
                 final_title = title_satisfies_navigation_goal(goal, observed_titles)
                 if final_title is not None:
                     for prerequisite in result.subgoals[:-1]:
@@ -580,6 +646,11 @@ class GoalAgent:
                     screenshot=screenshot_name,
                     after_screenshot=f"step-{number:02d}-after.png",
                 )
+                # Remember this action so the next reached screen's graph edge is
+                # attributed to it (only meaningful when it changed the screen).
+                graph_last_action = (
+                    (action.type, action.target) if step.screen_changed else graph_last_action
+                )
                 history.append(
                     {
                         "step": number,
@@ -626,6 +697,31 @@ class GoalAgent:
                 "total_steps": len(result.steps),
                 "total_decision_seconds": round(decision_total, 3),
             }
+            if scene_graph is not None:
+                pending = scene_graph.pending_findings()
+                result.scene_graph = {
+                    "coverage": scene_graph.coverage(),
+                    "pending_findings": [
+                        {"id": f.id, "kind": f.kind, "detail": f.detail}
+                        for f in pending
+                    ],
+                }
+                if scene_graph_path is not None:
+                    try:
+                        scene_graph.save(scene_graph_path)
+                        scene_graph.save(directory / "scene_graph.json")
+                    except Exception:  # noqa: BLE001
+                        pass
+                trace.event(
+                    "graph_summary",
+                    coverage=result.scene_graph["coverage"],
+                    pending_findings=len(pending),
+                )
+                if pending:
+                    self.progress(
+                        f"{len(pending)} HMI divergence(s) need review "
+                        "(candidate defects) — see result.json / scene_graph.json"
+                    )
             trace.event(
                 "done",
                 outcome=result.outcome,

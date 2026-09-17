@@ -572,6 +572,41 @@ rejects low-confidence actions, malformed coordinates, semantically unrelated ta
 state-changing taps for navigation goals, repeated no-progress actions, unrequested
 permission changes, and destructive or external actions proposed by the model.
 
+## Living scene graph (HMI vs. manual — defect detection)
+
+With a knowledge profile active, the agent maintains a **living scene graph** of
+the HMI. It is **seeded from the manual** (each screen a node; each documented
+`control.result` a transition), then **grows as screens are reached**:
+
+- a reached screen that matches a documented node → the node and the transition
+  that led to it are **confirmed**;
+- a reached screen that matches **no** documented node → a `pending_review` node
+  and an `undocumented_screen` finding — i.e. **the live HMI shows something the
+  spec doesn't describe: a candidate defect for you to approve or confirm**;
+- a transition between two documented screens the manual never described →
+  an `undocumented_transition` finding.
+
+The graph is persisted per profile (`knowledge/<profile>/scene_graph.json`) and
+accumulates across runs. Each run also drops a snapshot and a coverage +
+findings summary into `result.json` and the report.
+
+```bash
+# Seed the expected graph from an indexed profile's manual (optional; a run also
+# seeds it automatically the first time)
+ivi-agent graph build --profile benz
+
+# After runs: see coverage and anything awaiting review
+ivi-agent graph show --profile benz
+
+# Triage a divergence: legitimate (fold into the model) or a real defect
+ivi-agent graph review --profile benz --finding F0001 --decision approve
+ivi-agent graph review --profile benz --finding F0001 --decision defect
+```
+
+Matching uses screen-title tokens first and a perceptual-hash fallback only for
+title-less screens, so a titled screen that matches nothing is treated as new
+(never silently bucketed). Disable with `"scene_graph": false`.
+
 ## Action space
 
 The planner may choose one atomic action per step:
