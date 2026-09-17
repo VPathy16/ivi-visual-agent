@@ -103,6 +103,10 @@ completion.
 
 ## Complete macOS setup
 
+> Cross-platform step-by-step for **macOS / Linux / Windows** — start, run the
+> manual, and run on an emulator or a direct device — is in
+> [docs/setup-and-run.md](docs/setup-and-run.md).
+
 The commands below are the Apple Silicon setup used for the screenshots above.
 
 ### 1. Install the local tools
