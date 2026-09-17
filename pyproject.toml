@@ -12,10 +12,19 @@ dependencies = ["Pillow>=10.0"]
 
 [project.optional-dependencies]
 docs = ["reportlab>=4.0", "pypdf>=5.0"]
+# Self-contained text-embedding backend (embedding_backend="fastembed"): ONNX
+# runtime, no torch, no Ollama. Model weights are fetched on first use. Use this
+# when you don't want to run Ollama or pull an embedding model.
+embeddings = ["fastembed>=0.3"]
+# The "ollama" text-embedding backend needs no extra dependency (it calls a
+# local Ollama embedding model over HTTP with the stdlib).
 # Optional CLIP backend for matching a live icon crop against manual icons.
-# Text semantic retrieval needs no extra dependency (it uses a local Ollama
-# embedding model over HTTP).
 clip = ["open-clip-torch>=2.20", "torch>=2.0"]
+# OpenCV fast-path: template-match a retrieved manual icon on the live screen to
+# tap it directly, skipping the slow model call when the match is confident.
+# opencv 5.x requires numpy>=2, which conflicts with android_world/pandas
+# (numpy<2). Cap to 4.x so the CV fast-path coexists with the benchmark stack.
+cv = ["opencv-python-headless>=4.8,<5", "numpy>=1.24,<2"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"

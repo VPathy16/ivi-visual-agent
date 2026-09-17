@@ -6,7 +6,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from ivi_agent.embeddings import cosine
+from ivi_agent import embeddings as emb
+from ivi_agent.embeddings import (
+    FASTEMBED_DEFAULT_MODEL,
+    FastEmbedTextEmbedder,
+    cosine,
+    resolve_text_embedder,
+)
 from ivi_agent.knowledge import KnowledgeBase, _embed_chunks
 
 
@@ -133,6 +139,76 @@ class EmbedChunksTests(unittest.TestCase):
         written = _embed_chunks(chunks, tmp, None, FakeImageEmbedder([0.5, 0.5, 0.0]))
         self.assertTrue(written["image"])
         self.assertEqual(chunks[0]["image_embedding"], [0.5, 0.5, 0.0])
+
+
+class ResolveTextEmbedderTests(unittest.TestCase):
+    def test_disabled_returns_none(self) -> None:
+        self.assertIsNone(
+            resolve_text_embedder("http://x", "nomic-embed-text", False, "fastembed")
+        )
+        self.assertIsNone(
+            resolve_text_embedder("http://x", "nomic-embed-text", False, "ollama")
+        )
+
+    def test_fastembed_unavailable_falls_back_to_none(self) -> None:
+        # Simulate the [embeddings] extra not being installed.
+        original = FastEmbedTextEmbedder.available
+        FastEmbedTextEmbedder.available = staticmethod(lambda: False)  # type: ignore
+        try:
+            self.assertIsNone(
+                resolve_text_embedder("http://x", "BAAI/bge-small-en-v1.5", True, "fastembed")
+            )
+        finally:
+            FastEmbedTextEmbedder.available = original  # type: ignore
+
+    def test_fastembed_selected_and_probed(self) -> None:
+        # Available + probes cleanly -> the constructed embedder is returned.
+        built = {}
+
+        class FakeFast:
+            def __init__(self, model_name):
+                built["model"] = model_name
+
+            def embed(self, texts):
+                return [[0.1, 0.2, 0.3] for _ in texts]
+
+            @staticmethod
+            def available():
+                return True
+
+        original = emb.FastEmbedTextEmbedder
+        emb.FastEmbedTextEmbedder = FakeFast  # type: ignore
+        try:
+            # An Ollama-style model id must NOT leak into fastembed; it uses the default.
+            got = resolve_text_embedder("http://x", "nomic-embed-text", True, "fastembed")
+            self.assertIsInstance(got, FakeFast)
+            self.assertEqual(built["model"], FASTEMBED_DEFAULT_MODEL)
+            # A fastembed-style id (contains "/") is passed through.
+            resolve_text_embedder("http://x", "BAAI/bge-base-en-v1.5", True, "fastembed")
+            self.assertEqual(built["model"], "BAAI/bge-base-en-v1.5")
+        finally:
+            emb.FastEmbedTextEmbedder = original  # type: ignore
+
+    def test_fastembed_probe_failure_returns_none(self) -> None:
+        class BadFast:
+            def __init__(self, model_name):
+                pass
+
+            def embed(self, texts):
+                raise emb.EmbeddingError("boom")
+
+            @staticmethod
+            def available():
+                return True
+
+        original = emb.FastEmbedTextEmbedder
+        emb.FastEmbedTextEmbedder = BadFast  # type: ignore
+        try:
+            self.assertIsNone(
+                resolve_text_embedder("http://x", "x/y", True, "fastembed")
+            )
+        finally:
+            emb.FastEmbedTextEmbedder = original  # type: ignore
 
 
 if __name__ == "__main__":

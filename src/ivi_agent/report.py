@@ -16,6 +16,7 @@ def write_report(result: RunResult) -> None:
     for step in result.steps:
         action = step.action
         decision = f"{step.decision_seconds:.2f}s" if step.decision_seconds is not None else "—"
+        ground = {"cv": "CV", "a11y": "A11y"}.get(step.grounded_by, "model")
         step_rows.append(
             "<tr>"
             f"<td>{step.number}</td>"
@@ -23,6 +24,7 @@ def write_report(result: RunResult) -> None:
             f"<td>{html.escape(action.type)}</td>"
             f"<td>{html.escape(action.target)}</td>"
             f"<td>{action.confidence:.2f}</td>"
+            f"<td>{html.escape(ground)}</td>"
             f"<td>{decision}</td>"
             f"<td>{html.escape(action.reason)}</td>"
             "</tr>"
@@ -48,6 +50,45 @@ def write_report(result: RunResult) -> None:
             f"<br><strong>Manual:</strong> {html.escape(str(result.knowledge.get('manual_id', '')))}"
             f"<br><strong>Retrieved:</strong> {chunk_ids}</p>"
         )
+    scene_graph_html = ""
+    if result.scene_graph:
+        cov = result.scene_graph.get("coverage", {})
+        findings = result.scene_graph.get("pending_findings", [])
+        finding_rows = "".join(
+            "<tr>"
+            f"<td>{html.escape(str(f.get('id', '')))}</td>"
+            f"<td>{html.escape(str(f.get('kind', '')))}</td>"
+            f"<td>{html.escape(str(f.get('detail', '')))}</td>"
+            "</tr>"
+            for f in findings
+        )
+        findings_table = (
+            "<table><thead><tr><th>Finding</th><th>Kind</th><th>Detail (needs review)</th>"
+            f"</tr></thead><tbody>{finding_rows}</tbody></table>"
+            if findings
+            else "<p>No divergences pending review.</p>"
+        )
+        scene_graph_html = (
+            "<h2>Scene graph (HMI vs. manual)</h2>"
+            f"<p><strong>Confirmed:</strong> {cov.get('confirmed_screens', 0)}"
+            f"/{cov.get('manual_screens', 0)} documented screens · "
+            f"<strong>Undocumented reached:</strong> {cov.get('observed_new_screens', 0)} · "
+            f"<strong>Defects:</strong> {cov.get('defects', 0)} · "
+            f"<strong>Pending review:</strong> {cov.get('pending_findings', 0)}</p>"
+            f"{findings_table}"
+        )
+    grounding_summary = ""
+    if result.grounding:
+        grounding_summary = (
+            "<p><strong>Grounding:</strong> "
+            f"{result.grounding.get('accessibility_fast_path_steps', 0)} a11y / "
+            f"{result.grounding.get('cv_fast_path_steps', 0)} CV / "
+            f"{result.grounding.get('model_steps', 0)} model "
+            f"of {result.grounding.get('total_steps', 0)} steps · "
+            f"decision {result.grounding.get('total_decision_seconds', 0)}s · "
+            f"wall {result.grounding.get('total_wall_seconds', 0)}s "
+            f"({result.grounding.get('wall_seconds_per_step', 0)}s/step)</p>"
+        )
     document = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>IVI Agent Report</title>
 <style>
@@ -62,10 +103,12 @@ img{{width:280px;height:auto}} th{{background:#f4f4f4}}
 <p>{html.escape(result.reason)}</p>
 <p>{html.escape(result.started_at)} — {html.escape(result.finished_at)}</p>
 {knowledge}
+{scene_graph_html}
 <h2>Subgoals</h2>
 <table><thead><tr><th>#</th><th>Milestone</th><th>Status</th><th>Evidence</th></tr></thead>
 <tbody>{subgoal_rows}</tbody></table>
 <h2>Actions</h2>
-<table><thead><tr><th>#</th><th>Screen</th><th>Action</th><th>Target</th><th>Confidence</th><th>Decision</th><th>Reason</th></tr></thead>
+{grounding_summary}
+<table><thead><tr><th>#</th><th>Screen</th><th>Action</th><th>Target</th><th>Confidence</th><th>Grounded by</th><th>Decision</th><th>Reason</th></tr></thead>
 <tbody>{''.join(step_rows)}</tbody></table></body></html>"""
     (directory / "report.html").write_text(document, encoding="utf-8")

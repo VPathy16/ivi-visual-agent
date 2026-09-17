@@ -6,7 +6,9 @@
   "model_timeout_seconds": 60,
   "minimum_action_confidence": 0.75,
   "minimum_success_confidence": 0.85,
-  "settle_timeout_seconds": 5,
+  "settle_timeout_seconds": 2,
+  "settle_poll_seconds": 0.2,
+  "verify_each_step": true,
   "prefer_ui_tree": true,
   "enable_ocr": true,
   "max_image_dimension": 768,
@@ -19,7 +21,14 @@
   "knowledge_profile": null,
   "knowledge_top_k": 4,
   "use_embeddings": false,
+  "embedding_backend": "ollama",
   "embedding_model": "nomic-embed-text",
   "icon_matching": false,
-  "clip_model": "ViT-B-32"
+  "clip_model": "ViT-B-32",
+  "accessibility_fast_path": true,
+  "cv_fast_path": false,
+  "cv_match_threshold": 0.75,
+  "cv_min_retrieval_score": 2.0,
+  "trace": true,
+  "scene_graph": true
 }

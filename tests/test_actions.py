@@ -93,6 +93,34 @@ class ScreenSizeTests(unittest.TestCase):
         self.assertEqual(device.screen_size(), (2400, 1080))
 
 
+class _DumpsysDevice(AdbDevice):
+    DUMP = (
+        "Display 4619827259835644672 (HWC display 0): port=0 ...\n"
+        "Display 4619827551948147201 (HWC display 1): port=1 ...\n"
+    )
+
+    def _run(self, *args, binary=False, timeout=20):  # type: ignore[override]
+        if args[:2] == ("shell", "dumpsys"):
+            return self.DUMP
+        return b"" if binary else ""
+
+
+class CaptureDisplayIdTests(unittest.TestCase):
+    def test_hwc_index_maps_to_physical_id(self) -> None:
+        # --display-id 0 is an HWC index; screencap needs the physical id.
+        self.assertEqual(_DumpsysDevice(display_id=0).capture_display_id(), 4619827259835644672)
+        self.assertEqual(_DumpsysDevice(display_id=1).capture_display_id(), 4619827551948147201)
+
+    def test_physical_id_passed_through(self) -> None:
+        self.assertEqual(
+            _DumpsysDevice(display_id=4619827259835644672).capture_display_id(),
+            4619827259835644672,
+        )
+
+    def test_default_picks_primary(self) -> None:
+        self.assertEqual(_DumpsysDevice().capture_display_id(), 4619827259835644672)
+
+
 class AdbExecutionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.device = RecordingDevice()

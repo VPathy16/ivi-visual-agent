@@ -14,7 +14,15 @@
       "image": "images/icon-climate.png",
       "meaning": "Opens the climate/HVAC screen with temperature, fan, and zone controls.",
       "opens": "screen.climate",
-      "synonyms": ["A/C", "air conditioning", "temperature", "HVAC", "fan", "heating", "cooling"]
+      "synonyms": [
+        "A/C",
+        "air conditioning",
+        "temperature",
+        "HVAC",
+        "fan",
+        "heating",
+        "cooling"
+      ]
     },
     {
       "id": "seat_massage",
@@ -22,7 +30,13 @@
       "image": "images/icon-seat-massage.png",
       "meaning": "Opens the seat comfort / massage screen with programs and intensity.",
       "opens": "screen.seat_massage",
-      "synonyms": ["massage", "seat comfort", "lumbar", "back massage", "kinetic seat"]
+      "synonyms": [
+        "massage",
+        "seat comfort",
+        "lumbar",
+        "back massage",
+        "kinetic seat"
+      ]
     },
     {
       "id": "vehicle_settings",
@@ -30,7 +44,12 @@
       "image": "images/icon-vehicle-settings.png",
       "meaning": "Opens vehicle settings (driving modes, lighting, seat comfort, displays).",
       "opens": "screen.vehicle_settings",
-      "synonyms": ["car settings", "vehicle", "settings", "car menu"]
+      "synonyms": [
+        "car settings",
+        "vehicle",
+        "settings",
+        "car menu"
+      ]
     }
   ],
   "screens": [
@@ -39,7 +58,11 @@
       "name": "Home - tile grid",
       "image": "images/home.png",
       "description": "Custom launcher with large tiles. Tile positions vary by configuration.",
-      "landmarks": ["Status bar", "Large tile grid", "Climate / Seat Comfort / Vehicle tiles"],
+      "landmarks": [
+        "Status bar",
+        "Large tile grid",
+        "Climate / Seat Comfort / Vehicle tiles"
+      ],
       "controls": [
         {
           "id": "home.climate_tile",
@@ -69,7 +92,12 @@
       "name": "Vehicle settings",
       "image": "images/vehicle-settings.png",
       "description": "List of vehicle setting categories.",
-      "landmarks": ["Driving modes row", "Lighting row", "Seat comfort row", "Displays row"],
+      "landmarks": [
+        "Driving modes row",
+        "Lighting row",
+        "Seat comfort row",
+        "Displays row"
+      ],
       "controls": [
         {
           "id": "vehicle.seat_comfort",
@@ -84,7 +112,11 @@
       "name": "Climate",
       "image": "images/climate.png",
       "description": "HVAC controls. Temperature is a slider; fan/zones/auto/AC are toggles.",
-      "landmarks": ["Driver temperature value", "Temperature slider", "Fan / Zones / Auto / A/C controls"],
+      "landmarks": [
+        "Driver temperature value",
+        "Temperature slider",
+        "Fan / Zones / Auto / A/C controls"
+      ],
       "controls": [
         {
           "id": "climate.driver_temp",
@@ -99,7 +131,11 @@
       "name": "Seat massage",
       "image": "images/seat-massage.png",
       "description": "Massage programs (Wave, Lumbar, Shoulder), an intensity slider, and Start.",
-      "landmarks": ["Program cards", "Intensity slider", "Start button"],
+      "landmarks": [
+        "Program cards",
+        "Intensity slider",
+        "Start button"
+      ],
       "controls": [
         {
           "id": "seat.program_wave",
@@ -127,11 +163,18 @@
           "target": "home.climate_tile",
           "instruction": "Locate the Climate tile by its label or the climate icon and activate it.",
           "milestone": "Open the climate screen",
-          "expected": "The climate screen with temperature and fan controls is visible"
+          "expected": "The climate screen with temperature and fan controls is visible",
+          "success_text": "Climate"
         }
       ],
-      "success": ["Climate screen title is visible", "Temperature and fan controls are visible"],
-      "forbidden": ["Do not change temperature unless asked", "Do not accept unexpected permissions"]
+      "success": [
+        "Climate screen title is visible",
+        "Temperature and fan controls are visible"
+      ],
+      "forbidden": [
+        "Do not change temperature unless asked",
+        "Do not accept unexpected permissions"
+      ]
     },
     {
       "id": "task.start_seat_massage",
@@ -143,25 +186,35 @@
           "target": "home.seat_tile",
           "instruction": "Activate the Seat Comfort tile (or Vehicle settings > Seat comfort).",
           "milestone": "Open the seat massage screen",
-          "expected": "The seat massage programs are visible"
+          "expected": "The seat massage programs are visible",
+          "success_text": "Seat massage"
         },
         {
           "screen": "screen.seat_massage",
           "target": "seat.program_wave",
           "instruction": "Select a massage program such as Wave.",
           "milestone": "Select a massage program",
-          "expected": "A program is highlighted as selected"
+          "expected": "A program is highlighted as selected",
+          "success_text": "Selected"
         },
         {
           "screen": "screen.seat_massage",
           "target": "seat.start",
           "instruction": "Activate Start to begin the massage.",
           "milestone": "Start the seat massage",
-          "expected": "The massage is running (Start becomes Stop / a running indicator appears)"
+          "expected": "The massage is running (Start becomes Stop / a running indicator appears)",
+          "success_text": "Massage running"
         }
       ],
-      "success": ["A massage program is selected", "The massage is running"],
-      "forbidden": ["Do not change drive mode", "Do not adjust seat position", "Do not accept unexpected permissions"]
+      "success": [
+        "A massage program is selected",
+        "The massage is running"
+      ],
+      "forbidden": [
+        "Do not change drive mode",
+        "Do not adjust seat position",
+        "Do not accept unexpected permissions"
+      ]
     }
   ]
 }

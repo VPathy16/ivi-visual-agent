@@ -30,6 +30,7 @@ from ...config import Config
 from ...model import OllamaVisionModel
 from ...perception import extract_screen_titles, hash_distance, perceptual_hash
 from ...policy import PolicyViolation, validate_action
+from ...vision_match import cv_ground_from_knowledge
 from . import bridge
 
 
@@ -58,6 +59,31 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
             lenient=self.config.lenient_planning,
             num_ctx=self.config.model_context_tokens,
         )
+        # Optional knowledge base for the OpenCV fast-path. Most AndroidWorld
+        # tasks use stock apps with no manual profile, so this is usually None and
+        # the fast-path stays dormant; it activates only when a knowledge_profile
+        # with icon crops is configured (e.g. a custom-IVI task app).
+        self.knowledge = None
+        if self.config.knowledge_profile:
+            from pathlib import Path
+
+            from ...embeddings import resolve_text_embedder
+            from ...knowledge import KnowledgeBase
+
+            try:
+                embedder = resolve_text_embedder(
+                    self.config.ollama_url,
+                    self.config.embedding_model,
+                    self.config.use_embeddings,
+                    self.config.embedding_backend,
+                )
+                self.knowledge = KnowledgeBase.open(
+                    Path(self.config.knowledge_root),
+                    self.config.knowledge_profile,
+                    embedder=embedder,
+                )
+            except Exception as exc:  # noqa: BLE001 - knowledge is optional here
+                self._log(f"knowledge profile not loaded: {exc}")
         self._reset_episode()
 
     # -- episode state -----------------------------------------------------
@@ -148,15 +174,39 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
         screen_hash = perceptual_hash(image)
         blocked = blocked_actions_for_state(self._failed_action_memory, screen_hash)
         blocked_repr = [repr(item) for item in sorted(blocked, key=repr)]
+        grounded_by = "model"
         try:
-            action = self.model.plan(
-                goal,
-                image,
-                ui_dump,
-                self._history,
-                current_subgoal=current_subgoal,
-                blocked_actions=blocked_repr,
-            )
+            # 4a. OpenCV fast-path: if a knowledge profile is configured and a
+            # retrieved manual icon can be located on screen, tap it directly and
+            # skip the (slow) model call. Dormant on standard AndroidWorld tasks,
+            # which have no manual profile.
+            action = None
+            if self.config.cv_fast_path and self.knowledge is not None:
+                retrieval_query = " ".join([goal, current_subgoal, *titles])
+                step_knowledge = self.knowledge.query(
+                    retrieval_query, self.config.knowledge_top_k
+                )
+                candidate = cv_ground_from_knowledge(image, step_knowledge, self.config)
+                if candidate is not None and action_signature(candidate) not in blocked:
+                    try:
+                        validate_action(candidate, self.config, goal)
+                        action = candidate
+                        grounded_by = "cv"
+                        self._log(
+                            f"cv2 fast-path grounded {candidate.target!r} "
+                            f"(score {candidate.confidence:.2f}); skipping model"
+                        )
+                    except PolicyViolation:
+                        action = None
+            if action is None:
+                action = self.model.plan(
+                    goal,
+                    image,
+                    ui_dump,
+                    self._history,
+                    current_subgoal=current_subgoal,
+                    blocked_actions=blocked_repr,
+                )
             validate_action(action, self.config, goal)
             signature = action_signature(action)
             if signature in blocked and action.type != "wait":
@@ -204,9 +254,11 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
             return base_agent.AgentInteractionResult(self._at_budget(), data)
 
         data["action"] = {"type": action.type, "target": action.target, "reason": action.reason}
+        data["grounded_by"] = grounded_by
         self._log(
             f"action: {action.type} target={action.target!r} "
-            f"conf={action.confidence:.2f} x={action.x} y={action.y} reason={action.reason!r}"
+            f"conf={action.confidence:.2f} x={action.x} y={action.y} "
+            f"grounded_by={grounded_by} reason={action.reason!r}"
         )
 
         # 5. A finish proposal is a request for verification, not success itself.
@@ -246,6 +298,7 @@ class IviVisualAgent(base_agent.EnvironmentInteractingAgent):
                 "current_subgoal": current_subgoal,
                 "action": action.type,
                 "target": action.target,
+                "grounded_by": grounded_by,
                 "screen_changed": changed,
             }
         )

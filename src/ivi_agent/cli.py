@@ -109,6 +109,33 @@ def parser() -> argparse.ArgumentParser:
         "--root", default="knowledge", help="Knowledge profile root"
     )
     knowledge_query.add_argument("--limit", type=int, default=4)
+
+    graph = commands.add_parser(
+        "graph", help="Inspect and review the living scene graph (HMI defects)"
+    )
+    graph_commands = graph.add_subparsers(dest="graph_command", required=True)
+    graph_build = graph_commands.add_parser(
+        "build", help="Seed the expected scene graph from an indexed profile's manual"
+    )
+    graph_build.add_argument("--profile", required=True, help="Profile name")
+    graph_build.add_argument("--root", default="knowledge", help="Knowledge profile root")
+    graph_build.add_argument(
+        "--force", action="store_true", help="Overwrite an existing scene graph"
+    )
+    graph_show = graph_commands.add_parser(
+        "show", help="Show coverage, nodes, and pending divergence findings"
+    )
+    graph_show.add_argument("--profile", required=True, help="Profile name")
+    graph_show.add_argument("--root", default="knowledge", help="Knowledge profile root")
+    graph_review = graph_commands.add_parser(
+        "review", help="Approve a finding (legitimate) or mark it a defect"
+    )
+    graph_review.add_argument("--profile", required=True, help="Profile name")
+    graph_review.add_argument("--root", default="knowledge", help="Knowledge profile root")
+    graph_review.add_argument("--finding", required=True, help="Finding id, e.g. F0001")
+    graph_review.add_argument(
+        "--decision", required=True, choices=["approve", "defect"]
+    )
     return root
 
 
@@ -130,6 +157,7 @@ def main() -> None:
                 knowledge_config.ollama_url,
                 knowledge_config.embedding_model,
                 knowledge_config.use_embeddings,
+                knowledge_config.embedding_backend,
             )
             if args.knowledge_command == "index":
                 image_embedder = resolve_image_embedder(
@@ -148,6 +176,52 @@ def main() -> None:
                 ).query(args.goal, args.limit)
             print(json.dumps(summary, indent=2))
             raise SystemExit(0)
+        if args.command == "graph":
+            from .graph import SceneGraph
+            from .knowledge import KnowledgeBase
+
+            profile_dir = Path(args.root).resolve() / args.profile
+            graph_path = profile_dir / "scene_graph.json"
+            if args.graph_command == "build":
+                if graph_path.is_file() and not args.force:
+                    print(
+                        f"scene graph already exists: {graph_path} (use --force to overwrite)",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                kb = KnowledgeBase.open(Path(args.root), args.profile)
+                manual = {
+                    "screens": [
+                        chunk["data"]
+                        for chunk in kb.chunks
+                        if chunk.get("kind") == "screen" and isinstance(chunk.get("data"), dict)
+                    ]
+                }
+                built = SceneGraph.from_manual(manual)
+                built.save(graph_path)
+                print(json.dumps({"screens": len(built.nodes), "edges": len(built.edges), "path": str(graph_path)}, indent=2))
+                raise SystemExit(0)
+            if not graph_path.is_file():
+                print(f"no scene graph yet: {graph_path} (run `graph build` or a run first)", file=sys.stderr)
+                raise SystemExit(1)
+            graph_obj = SceneGraph.load(graph_path)
+            if args.graph_command == "show":
+                print(json.dumps({
+                    "coverage": graph_obj.coverage(),
+                    "nodes": [
+                        {"id": n.id, "name": n.name, "source": n.source, "status": n.status, "times_seen": n.times_seen}
+                        for n in graph_obj.nodes.values()
+                    ],
+                    "pending_findings": [
+                        {"id": f.id, "kind": f.kind, "detail": f.detail} for f in graph_obj.pending_findings()
+                    ],
+                }, indent=2))
+                raise SystemExit(0)
+            if args.graph_command == "review":
+                finding = graph_obj.review(args.finding, args.decision)
+                graph_obj.save(graph_path)
+                print(json.dumps({"finding": finding.id, "status": finding.status, "node": finding.node_id}, indent=2))
+                raise SystemExit(0)
         config = Config.load(args.config)
         if args.command == "doctor":
             raise SystemExit(doctor(config))
@@ -171,7 +245,10 @@ def main() -> None:
         profile = args.knowledge_profile or config.knowledge_profile
         knowledge_root = Path(args.knowledge_root or config.knowledge_root)
         text_embedder = resolve_text_embedder(
-            config.ollama_url, config.embedding_model, config.use_embeddings
+            config.ollama_url,
+            config.embedding_model,
+            config.use_embeddings,
+            config.embedding_backend,
         )
         knowledge_base = (
             KnowledgeBase.open(knowledge_root, profile, embedder=text_embedder)

@@ -103,6 +103,10 @@ completion.
 
 ## Complete macOS setup
 
+> Cross-platform step-by-step for **macOS / Linux / Windows** — start, run the
+> manual, and run on an emulator or a direct device — is in
+> [docs/setup-and-run.md](docs/setup-and-run.md).
+
 The commands below are the Apple Silicon setup used for the screenshots above.
 
 ### 1. Install the local tools
@@ -373,7 +377,9 @@ model training and stores no fixed tap coordinates.
 - [Editable sample manual folder](examples/custom-ivi-manual/)
 - [Sample custom-IVI RAG manual](output/pdf/sample-custom-ivi-rag-manual.pdf)
 
-Create a manual for a custom UI:
+Create a manual for a custom UI (full authoring guide:
+[docs/creating-a-manual.md](docs/creating-a-manual.md) — schema, icon crops for
+the CV fast-path, scene-graph edges, and step cues):
 
 ```bash
 python -m pip install -e '.[docs]'
@@ -487,23 +493,76 @@ Set `knowledge_profile` in `config.json` to use one vehicle manual by default, o
 ### Semantic retrieval (optional)
 
 By default the manual/RAG retriever uses keyword/TF-IDF matching. Enable semantic
-retrieval for better paraphrase and proprietary-icon recall:
+retrieval for better paraphrase and proprietary-icon recall. Two text-embedding
+backends are available — pick one with `embedding_backend`:
+
+**A. `fastembed` — self-contained, no Ollama, no model to pull (recommended):**
 
 ```json
 {
   "use_embeddings": true,
-  "embedding_model": "nomic-embed-text",
-  "icon_matching": true,
-  "clip_model": "ViT-B-32"
+  "embedding_backend": "fastembed",
+  "embedding_model": "BAAI/bge-small-en-v1.5"
 }
 ```
 
-- **Text embeddings** blend a local Ollama embedding score with keyword matching.
-  `ollama pull nomic-embed-text` — no extra Python dependency; falls back to
-  keyword-only when the embedding model is unreachable.
+```bash
+pip install -e '.[embeddings]'   # ONNX runtime, no torch; weights auto-downloaded on first use
+```
+
+**B. `ollama` — reuse your local Ollama:**
+
+```json
+{
+  "use_embeddings": true,
+  "embedding_backend": "ollama",
+  "embedding_model": "nomic-embed-text"
+}
+```
+
+```bash
+ollama pull nomic-embed-text     # needs Ollama running with the model pulled
+```
+
+- **Text embeddings** blend the embedding score with keyword matching, so a goal
+  that shares no tokens with a chunk is still recalled. Either backend falls back
+  to keyword-only when unavailable — nothing breaks if the model or extra is
+  missing. Example: with the `benz` profile, the query *"switch on the chair
+  kneading rollers"* (no literal *seat*/*massage* tokens) returns nothing useful
+  under keyword-only, but returns `task.start_seat_massage` under semantic.
+- **Embeddings are written at index time**, so switch on the backend *before*
+  `ivi-agent knowledge index` (re-index an existing profile to add vectors).
 - **`icon_matching`** adds CLIP image matching of a live icon crop against the
   manual icons (`KnowledgeBase.match_icon`); needs the optional extra
   `pip install -e '.[clip]'` and degrades gracefully when unavailable.
+
+### OpenCV fast-path (optional, speeds up runs)
+
+The per-step vision-model call is the slow part of a run. When the retriever has
+already surfaced a manual **icon** for the current subgoal, OpenCV can often
+locate that icon on the live screen in milliseconds — so the agent taps it
+directly and skips the model call for that step.
+
+```json
+{
+  "cv_fast_path": true,
+  "cv_match_threshold": 0.75,
+  "cv_min_retrieval_score": 2.0
+}
+```
+
+```bash
+pip install -e '.[cv]'   # opencv-python-headless
+```
+
+- It fires only when the retriever ranked the icon at or above
+  `cv_min_retrieval_score` (the "keyword/semantic matched this icon" gate) **and**
+  a multi-scale template match clears `cv_match_threshold`; otherwise the normal
+  model path runs — so a wrong or weak match never taps.
+- Keep `cv_match_threshold` ≥ `minimum_action_confidence`, since the matched tap
+  is still subject to the safety policy (protected regions, confidence floor).
+- Needs a knowledge profile whose icons have crops. Without the `[cv]` extra it
+  is a no-op and the agent behaves exactly as before.
 
 Coordinates in `protected_regions` are normalized rectangles in the form
 `[left, top, right, bottom]`. This prevents taps in the upper-right corner:
@@ -518,6 +577,41 @@ Set `allow_text_input` to `false` for trials that must never type. The controlle
 rejects low-confidence actions, malformed coordinates, semantically unrelated targets,
 state-changing taps for navigation goals, repeated no-progress actions, unrequested
 permission changes, and destructive or external actions proposed by the model.
+
+## Living scene graph (HMI vs. manual — defect detection)
+
+With a knowledge profile active, the agent maintains a **living scene graph** of
+the HMI. It is **seeded from the manual** (each screen a node; each documented
+`control.result` a transition), then **grows as screens are reached**:
+
+- a reached screen that matches a documented node → the node and the transition
+  that led to it are **confirmed**;
+- a reached screen that matches **no** documented node → a `pending_review` node
+  and an `undocumented_screen` finding — i.e. **the live HMI shows something the
+  spec doesn't describe: a candidate defect for you to approve or confirm**;
+- a transition between two documented screens the manual never described →
+  an `undocumented_transition` finding.
+
+The graph is persisted per profile (`knowledge/<profile>/scene_graph.json`) and
+accumulates across runs. Each run also drops a snapshot and a coverage +
+findings summary into `result.json` and the report.
+
+```bash
+# Seed the expected graph from an indexed profile's manual (optional; a run also
+# seeds it automatically the first time)
+ivi-agent graph build --profile benz
+
+# After runs: see coverage and anything awaiting review
+ivi-agent graph show --profile benz
+
+# Triage a divergence: legitimate (fold into the model) or a real defect
+ivi-agent graph review --profile benz --finding F0001 --decision approve
+ivi-agent graph review --profile benz --finding F0001 --decision defect
+```
+
+Matching uses screen-title tokens first and a perceptual-hash fallback only for
+title-less screens, so a titled screen that matches nothing is treated as new
+(never silently bucketed). Disable with `"scene_graph": false`.
 
 ## Action space
 
@@ -624,7 +718,9 @@ the OEM's documentation.
 Proprietary icons (climate zones, seat massage, drive modes) are the main
 recognition risk. Give the agent an icon/step reference it can retrieve:
 
-A ready-made scaffold ships at [`examples/benz-mbux-manual/`](examples/benz-mbux-manual/)
+See [docs/creating-a-manual.md](docs/creating-a-manual.md) for the full manual
+authoring guide (schema, icon crops to maximize CV fast-path coverage, scene-graph
+edges, and step cues). A ready-made scaffold ships at [`examples/benz-mbux-manual/`](examples/benz-mbux-manual/)
 (home, vehicle settings, climate, seat-massage screens + icons, with placeholder
 crops to replace). See its README for details.
 
@@ -722,8 +818,22 @@ Each run creates a timestamped directory under `runs/` containing:
 
 - `step-NN.png`: screen observed before each decision
 - `step-NN-after.png`: screen after an executed action
-- `result.json`: goal, subgoals, actions, timing, and verification evidence
-- `report.html`: a human-readable test report
+- `result.json`: goal, subgoals, actions, timing, and verification evidence.
+  Each step records `grounded_by` (`cv` for an OpenCV fast-path tap, `model`
+  otherwise), and a `grounding` summary counts CV vs. model steps and total
+  decision time — so you can see how much the fast-path saved.
+- `report.html`: a human-readable test report (with a **Grounded by** column)
+- `events.jsonl`: the ordered event stream of the run (one JSON object per line:
+  `run_start`, `retrieval`, `plan`, `step_begin`, `decision`, `execute`,
+  `verify`, `incident`, `done`) — the backbone for replay and diagnostics.
+- `agent.log`: the same events as timestamped text.
+- `task.json` / `plan.json`: the goal + config snapshot and the planned subgoals.
+
+The trace layer (`trace: true`, default on) is best-effort — a tracing failure
+never aborts a run. The event schema is open, so future signal sources (VHAL/CAN
+vehicle state, system logs) append as their own event kinds — see the design for
+operator-declared state probes, CCF divergence checks, recovery hooks, and MCP:
+[docs/probes-commands-and-mcp.md](docs/probes-commands-and-mcp.md).
 
 The `runs/` directory is intentionally ignored by Git because it can grow quickly.
 
