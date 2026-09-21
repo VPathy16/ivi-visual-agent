@@ -16,6 +16,37 @@ from .model import OllamaVisionModel
 from .suite import load_suite_cases, run_suite
 
 
+def _promote_finding(graph_obj, finding, knowledge_root: Path, profile: str) -> list[str]:
+    """Write an approved scene-graph discovery into the manual so the agent
+    remembers it. Returns human-readable notes on what was documented.
+
+    Best-effort: a knowledge profile that can't be opened just yields no update
+    (the approval itself already stuck in the scene graph).
+    """
+    from .graph import SceneGraph  # local import: CLI already imports lazily
+    from .knowledge import KnowledgeBase, KnowledgeError
+
+    try:
+        kb = KnowledgeBase.open(knowledge_root, profile)
+    except (KnowledgeError, OSError):
+        return []
+    notes: list[str] = []
+    if finding.kind == "undocumented_transition" and finding.src and finding.dst:
+        edge = graph_obj.edges.get((finding.src, finding.dst))
+        via = edge.via_control if edge and edge.via_control else (edge.via_action if edge else "")
+        dst_name = graph_obj.nodes[finding.dst].name if finding.dst in graph_obj.nodes else finding.dst
+        if kb.document_transition(finding.src, finding.dst, dst_name, via):
+            notes.append(
+                f"documented transition {finding.src} -> {finding.dst}"
+                + (f" via {via!r}" if via else "")
+            )
+    elif finding.kind == "undocumented_screen" and finding.node_id in graph_obj.nodes:
+        node = graph_obj.nodes[finding.node_id]
+        if kb.document_screen(node.id, node.name, list(node.tokens)):
+            notes.append(f"documented screen {node.id!r} ({node.name!r})")
+    return notes
+
+
 def run_doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
     """Return preflight checks as (name, passed, detail) — no printing.
 
@@ -258,7 +289,17 @@ def main() -> None:
             if args.graph_command == "review":
                 finding = graph_obj.review(args.finding, args.decision)
                 graph_obj.save(graph_path)
-                print(json.dumps({"finding": finding.id, "status": finding.status, "node": finding.node_id}, indent=2))
+                # Approving a discovery promotes it into the manual, so the agent
+                # remembers the path and future runs use it without the model.
+                manual_updated: list[str] = []
+                if finding.status == "approved":
+                    manual_updated = _promote_finding(graph_obj, finding, Path(args.root), args.profile)
+                print(json.dumps({
+                    "finding": finding.id,
+                    "status": finding.status,
+                    "node": finding.node_id,
+                    "manual_updated": manual_updated,
+                }, indent=2))
                 raise SystemExit(0)
         if args.command == "replay":
             from .replay import build_replay

@@ -128,5 +128,64 @@ class KnowledgeTests(unittest.TestCase):
             KnowledgeBase.open(Path("knowledge"), "../escape")
 
 
+class PromotionTests(unittest.TestCase):
+    def _profile(self, tmp: Path) -> Path:
+        profile = tmp / "benz"
+        profile.mkdir()
+        (profile / "manifest.json").write_text(
+            json.dumps({"schema_version": 1, "profile": "benz", "manual_id": "m1"}),
+            encoding="utf-8",
+        )
+        chunks = [
+            {"id": "screen.climate", "kind": "screen", "name": "Climate",
+             "text": "Climate", "data": {"id": "screen.climate", "name": "Climate", "controls": []}},
+            {"id": "screen.seat_massage", "kind": "screen", "name": "Seat massage",
+             "text": "Seat massage", "data": {"id": "screen.seat_massage", "name": "Seat massage", "controls": []}},
+        ]
+        (profile / "chunks.jsonl").write_text(
+            "\n".join(json.dumps(c) for c in chunks) + "\n", encoding="utf-8"
+        )
+        return profile
+
+    def test_document_transition_persists_and_reloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._profile(root)
+            kb = KnowledgeBase.open(root, "benz")
+            self.assertTrue(
+                kb.document_transition("screen.climate", "screen.seat_massage",
+                                       "Seat massage", "~M~")
+            )
+            # A fresh load (next run) sees the learned control on the source screen.
+            reloaded = KnowledgeBase.open(root, "benz")
+            climate = reloaded._screen_chunk("screen.climate")
+            controls = climate["data"]["controls"]
+            self.assertEqual(len(controls), 1)
+            self.assertEqual(controls[0]["result"], "screen.seat_massage")
+            self.assertEqual(controls[0]["name"], "~M~")
+            self.assertIn("~M~", climate["text"])  # retrieval can now surface it
+
+    def test_document_transition_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._profile(root)
+            kb = KnowledgeBase.open(root, "benz")
+            kb.document_transition("screen.climate", "screen.seat_massage", "Seat massage", "~M~")
+            # Second approval of the same route adds no duplicate control.
+            kb.document_transition("screen.climate", "screen.seat_massage", "Seat massage", "~M~")
+            climate = KnowledgeBase.open(root, "benz")._screen_chunk("screen.climate")
+            self.assertEqual(len(climate["data"]["controls"]), 1)
+
+    def test_document_screen_adds_new_page(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._profile(root)
+            kb = KnowledgeBase.open(root, "benz")
+            self.assertTrue(kb.document_screen("screen.vehicle", "Vehicle", ["Vehicle"]))
+            self.assertFalse(kb.document_screen("screen.vehicle", "Vehicle"))  # idempotent
+            reloaded = KnowledgeBase.open(root, "benz")
+            self.assertIsNotNone(reloaded._screen_chunk("screen.vehicle"))
+
+
 if __name__ == "__main__":
     unittest.main()

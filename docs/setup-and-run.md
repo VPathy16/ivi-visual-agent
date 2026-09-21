@@ -196,6 +196,22 @@ Network head unit: `adb connect <IP>:5555`.
 ```bash
 ivi-agent graph show --profile benz                # coverage + pending findings
 ```
+
+When the agent reaches a screen or takes a path the manual doesn't describe, it
+finishes the task (using the model that once) and flags the path for review
+instead of failing. You decide whether it's a real path or a defect:
+
+```bash
+ivi-agent graph review --profile benz --finding F0001 --approve   # legit path
+ivi-agent graph review --profile benz --finding F0001 --defect    # a bug
+```
+
+**Approving writes the path into the manual** (a new screen page, or the control
+that reaches it). The manual becomes the agent's memory: the next run reads that
+page, so the a11y fast-path and retrieval handle the hop with **no model call**.
+Marking it a defect leaves it flagged and does *not* teach it. So the model is
+needed to discover a path once; after you approve it, that path is free forever.
+
 The newest `runs/<timestamp>/` holds `result.json` (outcome, grounding, scene
 graph), `report.html`, `replay.html`, `events.jsonl`, `agent.log`, and step
 screenshots. macOS `open <file>`, Linux `xdg-open <file>`, Windows `start <file>`.

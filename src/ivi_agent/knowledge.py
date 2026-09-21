@@ -342,6 +342,85 @@ class KnowledgeBase:
     ) -> "KnowledgeBase":
         return cls(knowledge_root.resolve() / _safe_profile(profile), embedder=embedder)
 
+    # -- learning: promote approved discoveries into the manual -------------
+    def _persist(self) -> None:
+        """Rewrite chunks.jsonl from the in-memory chunks."""
+        path = self.directory / "chunks.jsonl"
+        path.write_text(
+            "\n".join(json.dumps(chunk, ensure_ascii=False) for chunk in self.chunks)
+            + "\n",
+            encoding="utf-8",
+        )
+
+    def _screen_chunk(self, screen_id: str) -> dict[str, Any] | None:
+        for chunk in self.chunks:
+            if chunk.get("kind") != "screen":
+                continue
+            data = chunk.get("data") if isinstance(chunk.get("data"), dict) else {}
+            if chunk.get("id") == screen_id or data.get("id") == screen_id:
+                return chunk
+        return None
+
+    def document_screen(
+        self, screen_id: str, name: str, titles: list[str] | None = None
+    ) -> bool:
+        """Add a learned screen as a manual page. Returns True if newly added."""
+        if self._screen_chunk(screen_id) is not None:
+            return False
+        data: dict[str, Any] = {
+            "id": screen_id,
+            "name": name,
+            "title": name,
+            "controls": [],
+            "learned": True,
+        }
+        if titles:
+            data["landmarks"] = list(dict.fromkeys(titles))
+        chunk = {
+            "id": screen_id,
+            "kind": "screen",
+            "name": name,
+            "text": _item_text("screen", data),
+            "data": data,
+        }
+        self.chunks.append(chunk)
+        self._persist()
+        return True
+
+    def document_transition(
+        self,
+        src_id: str,
+        dst_id: str,
+        dst_name: str,
+        via_control: str,
+        action: str = "tap",
+    ) -> bool:
+        """Document that a control on ``src`` reaches ``dst`` — a learned manual
+        page for an approved path. Returns True if the manual changed."""
+        changed = self.document_screen(dst_id, dst_name)
+        src = self._screen_chunk(src_id)
+        if src is None:
+            self.document_screen(src_id, src_id.rsplit(".", 1)[-1].replace("_", " ").title())
+            src = self._screen_chunk(src_id)
+        data = src.setdefault("data", {}) if src else {}
+        controls = data.setdefault("controls", [])
+        if any(isinstance(c, dict) and c.get("result") == dst_id for c in controls):
+            return changed  # a control already documents this route
+        label = (via_control or dst_name).strip()
+        controls.append(
+            {
+                "id": "_".join(_tokens(label)) or dst_id.rsplit(".", 1)[-1],
+                "name": label,
+                "action": action or "tap",
+                "result": dst_id,
+                "learned": True,
+            }
+        )
+        if src is not None:
+            src["text"] = _item_text("screen", data)
+        self._persist()
+        return True
+
     def query(
         self, query: str, limit: int = 4, embedder: Any | None = None
     ) -> dict[str, Any]:
