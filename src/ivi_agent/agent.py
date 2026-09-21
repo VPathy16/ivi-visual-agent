@@ -13,6 +13,7 @@ from .knowledge import KnowledgeBase, prompt_context, reference_images
 from .perception import (
     extract_ocr_screen_titles,
     extract_screen_titles,
+    extract_tree_headings,
     extract_ui_elements,
     extract_visible_text,
     hash_distance,
@@ -469,17 +470,26 @@ class GoalAgent:
                 )
                 current_subgoal = result.subgoals[current_subgoal_index]
                 observed_titles = extract_screen_titles(ui_dump)
+                if not observed_titles:
+                    # The tree usually still holds the heading (WebView/Flutter/
+                    # custom IVI UIs just don't tag it with a title resource-id),
+                    # so read it from the tree before paying for a ~10s OCR pass.
+                    observed_titles = extract_tree_headings(ui_dump)
                 if not observed_titles and self.model.enable_ocr:
+                    _phase = time.monotonic()
                     observed_titles = extract_ocr_screen_titles(image)
+                    _add_phase("ocr", _phase)
                 visible_text = extract_visible_text(ui_dump)
                 retrieval_query = " ".join(
                     [goal, current_subgoal.description, *observed_titles, *visible_text[:12]]
                 )
+                _phase = time.monotonic()
                 step_knowledge = (
                     self.knowledge.query(retrieval_query, self.config.knowledge_top_k)
                     if self.knowledge
                     else {}
                 )
+                _add_phase("step_retrieval", _phase)
                 step_context = (
                     prompt_context(step_knowledge, current_subgoal.description)
                     if step_knowledge
@@ -502,6 +512,7 @@ class GoalAgent:
                 # Grow the living scene graph with the screen we just reached,
                 # attributing the transition to the previous step's action.
                 if scene_graph is not None:
+                    _phase = time.monotonic()
                     observation = scene_graph.observe(
                         observed_titles,
                         phash=screen_hash,
@@ -511,6 +522,7 @@ class GoalAgent:
                         via_action=graph_last_action[0],
                         via_target=graph_last_action[1],
                     )
+                    _add_phase("graph_observe", _phase)
                     graph_prev_node = observation.node_id
                     trace.event(
                         "graph_observe",
