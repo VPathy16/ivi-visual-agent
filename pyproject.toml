@@ -25,9 +25,14 @@ clip = ["open-clip-torch>=2.20", "torch>=2.0"]
 # opencv 5.x requires numpy>=2, which conflicts with android_world/pandas
 # (numpy<2). Cap to 4.x so the CV fast-path coexists with the benchmark stack.
 cv = ["opencv-python-headless>=4.8,<5", "numpy>=1.24,<2"]
+# MCP server: expose the agent to MCP clients (Claude Code, Antigravity, ...)
+# over stdio. Run with `ivi-agent-mcp`.
+# Pinned to the 1.x FastMCP API; mcp 2.x renamed FastMCP -> MCPServer.
+mcp = ["mcp>=1.2,<2"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"
+ivi-agent-mcp = "ivi_agent.mcp_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

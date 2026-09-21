@@ -16,7 +16,12 @@ from .model import OllamaVisionModel
 from .suite import load_suite_cases, run_suite
 
 
-def doctor(config: Config) -> int:
+def run_doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
+    """Return preflight checks as (name, passed, detail) — no printing.
+
+    Shared by the `doctor` CLI command and the MCP server so both report the
+    same local-dependency and model-availability state.
+    """
     checks: list[tuple[str, bool, str]] = []
     for executable in ("adb", "scrcpy", "ollama", "tesseract"):
         location = shutil.which(executable)
@@ -29,7 +34,11 @@ def doctor(config: Config) -> int:
         checks.append((f"model {config.model}", available, "available" if available else "not pulled"))
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
         checks.append(("Ollama API", False, str(exc)))
+    return checks
 
+
+def doctor(config: Config) -> int:
+    checks = run_doctor_checks(config)
     width = max(len(name) for name, _, _ in checks)
     for name, passed, detail in checks:
         print(f"{'OK' if passed else 'MISSING':7} {name:<{width}}  {detail}")
