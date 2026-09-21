@@ -230,6 +230,28 @@ class OllamaVisionModel:
         # the strict default preserves the original goal-driven guardrails.
         self.lenient = lenient
 
+    def warmup(self) -> bool:
+        """Best-effort: ask Ollama to load the model into memory now.
+
+        A run's first vision call otherwise pays a multi-second cold load. Firing
+        this at run startup (in a background thread) lets the model load *while*
+        the first screenshot + uiautomator dump happen, so the first real
+        decision is warm. Returns True if the warmup request succeeded; failures
+        are swallowed because a cold first call still works.
+        """
+        payload = {"model": self.model, "keep_alive": "10m"}
+        request = urllib.request.Request(
+            f"{self.base_url}/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                response.read()
+            return True
+        except Exception:  # noqa: BLE001 - warmup is advisory, never fatal
+            return False
+
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:
         text = text.strip()

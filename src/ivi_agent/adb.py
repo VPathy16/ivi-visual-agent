@@ -183,7 +183,29 @@ class AdbDevice:
         except AdbError:
             return ""
 
+    @staticmethod
+    def _extract_hierarchy(raw: str) -> str:
+        """Pull the <hierarchy> XML out of a uiautomator dump, dropping any
+        trailing status line (e.g. 'UI hierchary dumped to: ...')."""
+        start = raw.find("<?xml")
+        if start < 0:
+            start = raw.find("<hierarchy")
+        end = raw.rfind("</hierarchy>")
+        if start >= 0 and end > start:
+            return raw[start : end + len("</hierarchy>")]
+        return ""
+
     def ui_dump(self) -> str:
+        # Fast path: dump straight to stdout in one adb round-trip instead of
+        # writing a file on the device and cat-ing it back (two round-trips).
+        try:
+            raw = str(self._run("exec-out", "uiautomator", "dump", "/dev/tty", timeout=15))
+            xml = self._extract_hierarchy(raw)
+            if xml:
+                return xml
+        except AdbError:
+            pass
+        # Fallback for devices where /dev/tty dumping is unavailable.
         remote = "/sdcard/ivi-agent-window.xml"
         self._run("shell", "uiautomator", "dump", remote, timeout=15)
         return str(self._run("exec-out", "cat", remote, timeout=15))

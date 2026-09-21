@@ -200,6 +200,47 @@ class RecordingDevice(AdbDevice):
         return b"" if binary else ""
 
 
+class _DumpDevice(AdbDevice):
+    def __init__(self, tty_output: str) -> None:
+        super().__init__(serial="emulator-5554")
+        self.tty_output = tty_output
+        self.calls: list[tuple[str, ...]] = []
+
+    def _run(self, *args, binary=False, timeout=20):  # type: ignore[override]
+        self.calls.append(args)
+        if args[:3] == ("exec-out", "uiautomator", "dump"):
+            return self.tty_output
+        if args[:2] == ("exec-out", "cat"):
+            return "<hierarchy><node text='fallback'/></hierarchy>"
+        return ""
+
+
+class UiDumpTests(unittest.TestCase):
+    def test_extract_hierarchy_strips_trailing_status(self) -> None:
+        raw = ("<?xml version='1.0'?><hierarchy rotation='0'><node/></hierarchy>\n"
+               "UI hierchary dumped to: /dev/tty")
+        self.assertEqual(
+            AdbDevice._extract_hierarchy(raw),
+            "<?xml version='1.0'?><hierarchy rotation='0'><node/></hierarchy>",
+        )
+
+    def test_extract_hierarchy_returns_empty_without_tree(self) -> None:
+        self.assertEqual(AdbDevice._extract_hierarchy("dump failed"), "")
+
+    def test_ui_dump_uses_single_call_fast_path(self) -> None:
+        device = _DumpDevice("<hierarchy><node text='fast'/></hierarchy>\nUI dumped")
+        xml = device.ui_dump()
+        self.assertIn("fast", xml)
+        # No write-then-cat fallback when the fast path yields valid XML.
+        self.assertFalse(any(c[:2] == ("shell", "uiautomator") for c in device.calls))
+
+    def test_ui_dump_falls_back_when_no_tree(self) -> None:
+        device = _DumpDevice("error: /dev/tty unavailable")
+        xml = device.ui_dump()
+        self.assertIn("fallback", xml)
+        self.assertTrue(any(c[:2] == ("shell", "uiautomator") for c in device.calls))
+
+
 class CleanStartTests(unittest.TestCase):
     def setUp(self) -> None:
         self.device = RecordingDevice()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -356,6 +357,12 @@ class GoalAgent:
             )
 
         try:
+            # Warm the model in the background so its cold load overlaps the
+            # first capture + uiautomator dump instead of stalling the first
+            # decision. Best-effort; a cold first call still works.
+            warmup = getattr(self.model, "warmup", None)
+            if callable(warmup):
+                threading.Thread(target=warmup, daemon=True).start()
             _phase = time.monotonic()
             self.device.ensure_ready()
             self.device.wake_if_needed()

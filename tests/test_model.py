@@ -2,12 +2,29 @@ import unittest
 import io
 
 from typing import Any
+from unittest import mock
 
 from PIL import Image
 
 from ivi_agent.model import ACTION_SCHEMA, OllamaVisionModel
 from ivi_agent.perception import UIElement
 from ivi_agent.types import Action
+
+
+class WarmupTests(unittest.TestCase):
+    def _model(self) -> OllamaVisionModel:
+        return OllamaVisionModel("http://127.0.0.1:11434", "qwen3-vl:8b-instruct")
+
+    def test_warmup_returns_true_on_success(self) -> None:
+        with mock.patch("ivi_agent.model.urllib.request.urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b"{}"
+            self.assertTrue(self._model().warmup())
+
+    def test_warmup_swallows_failure(self) -> None:
+        with mock.patch(
+            "ivi_agent.model.urllib.request.urlopen", side_effect=OSError("down")
+        ):
+            self.assertFalse(self._model().warmup())
 
 
 class SemanticAdvanceTests(unittest.TestCase):
