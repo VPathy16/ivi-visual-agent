@@ -23,6 +23,7 @@ from .graph import SceneGraph
 from .logs import crash_summary, scan_crashes
 from .policy import PolicyViolation, validate_action
 from .report import write_report
+from .replay import build_replay
 from .trace import NullTrace, RunTrace
 from .types import Action, RunResult, StepRecord, SubgoalRecord
 from .vision_match import cv_ground_from_knowledge
@@ -1082,4 +1083,9 @@ class GoalAgent:
             )
             trace.close()
             write_report(result)
+            # Interactive, shareable step-by-step replay (best-effort).
+            try:
+                build_replay(Path(result.run_directory))
+            except Exception:  # noqa: BLE001 - replay is a convenience, never fatal
+                pass
         return result

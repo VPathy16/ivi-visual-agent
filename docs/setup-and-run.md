@@ -197,8 +197,21 @@ Network head unit: `adb connect <IP>:5555`.
 ivi-agent graph show --profile benz                # coverage + pending findings
 ```
 The newest `runs/<timestamp>/` holds `result.json` (outcome, grounding, scene
-graph), `report.html`, `events.jsonl`, `agent.log`, and step screenshots. macOS
-`open <file>`, Linux `xdg-open <file>`, Windows `start <file>`.
+graph), `report.html`, `replay.html`, `events.jsonl`, `agent.log`, and step
+screenshots. macOS `open <file>`, Linux `xdg-open <file>`, Windows `start <file>`.
+
+`replay.html` is an interactive, self-contained step-by-step console (screens,
+actions, grounding, reasoning stream, phase timing, scene-graph coverage,
+crashes) written automatically at the end of every run — one file you can open
+offline or send to someone. Rebuild it for any past run with:
+
+```bash
+ivi-agent replay --run runs/<timestamp>
+```
+
+Speed vs rigour is one flag: `ivi-agent run --profile fast` (minimum overhead) /
+`balanced` (default) / `strict` (verify every step). It overrides `config.json`
+for the keys it owns.
 
 ## Notes that bite on every OS
 

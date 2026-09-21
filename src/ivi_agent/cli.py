@@ -91,6 +91,11 @@ def parser() -> argparse.ArgumentParser:
     mirror.add_argument("--serial", help="ADB device serial")
     mirror.add_argument("--record", help="Optional MP4 recording path")
 
+    replay = commands.add_parser(
+        "replay", help="Build an interactive replay.html for a finished run"
+    )
+    replay.add_argument("--run", required=True, help="Path to a run directory")
+
     manual = commands.add_parser("manual", help="Build a RAG-friendly PDF manual")
     manual_commands = manual.add_subparsers(dest="manual_command", required=True)
     manual_build = manual_commands.add_parser(
@@ -235,6 +240,16 @@ def main() -> None:
                 graph_obj.save(graph_path)
                 print(json.dumps({"finding": finding.id, "status": finding.status, "node": finding.node_id}, indent=2))
                 raise SystemExit(0)
+        if args.command == "replay":
+            from .replay import build_replay
+
+            run_dir = Path(args.run)
+            if not run_dir.is_dir():
+                print(f"no such run directory: {run_dir}", file=sys.stderr)
+                raise SystemExit(1)
+            out = build_replay(run_dir)
+            print(json.dumps({"replay": str(out)}, indent=2))
+            raise SystemExit(0)
         config = Config.load(args.config)
         config.apply_profile(getattr(args, "exec_profile", None))
         if args.command == "doctor":
