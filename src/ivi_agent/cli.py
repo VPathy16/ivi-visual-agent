@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .adb import AdbDevice
 from .agent import GoalAgent
-from .config import Config
+from .config import Config, PROFILES
 from .model import OllamaVisionModel
 from .suite import load_suite_cases, run_suite
 
@@ -63,6 +63,13 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--dry-run", action="store_true", help="Plan one action without executing it")
     run.add_argument("--knowledge-profile", help="Local manual knowledge profile")
     run.add_argument("--knowledge-root", help="Directory containing knowledge profiles")
+    run.add_argument(
+        "--profile",
+        dest="exec_profile",
+        choices=sorted(PROFILES),
+        help="Execution profile: fast (minimum overhead) | balanced (default) | "
+        "strict (verify every step). config.json / other flags override it.",
+    )
 
     suite = commands.add_parser("suite", help="Run independent goals from Home")
     suite.add_argument("--cases", required=True, help="Path to suite case JSON")
@@ -73,6 +80,12 @@ def parser() -> argparse.ArgumentParser:
     )
     suite.add_argument("--knowledge-profile", help="Local manual knowledge profile")
     suite.add_argument("--knowledge-root", help="Directory containing knowledge profiles")
+    suite.add_argument(
+        "--profile",
+        dest="exec_profile",
+        choices=sorted(PROFILES),
+        help="Execution profile: fast | balanced | strict (see `run --help`).",
+    )
 
     mirror = commands.add_parser("scrcpy", help="Open a live scrcpy view")
     mirror.add_argument("--serial", help="ADB device serial")
@@ -223,6 +236,7 @@ def main() -> None:
                 print(json.dumps({"finding": finding.id, "status": finding.status, "node": finding.node_id}, indent=2))
                 raise SystemExit(0)
         config = Config.load(args.config)
+        config.apply_profile(getattr(args, "exec_profile", None))
         if args.command == "doctor":
             raise SystemExit(doctor(config))
         if args.command == "scrcpy":

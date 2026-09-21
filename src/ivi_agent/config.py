@@ -5,6 +5,32 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
+# Named execution profiles, ARTEMIS-style: a small, coherent bundle of speed vs
+# rigour knobs picked with one flag. Only the keys listed here are touched. A
+# profile passed on the CLI is a deliberate "run it this way now" intent, so it
+# overrides the persistent config.json for these keys (precedence: library
+# defaults < config.json < --profile). The untouched grounding ladder
+# (a11y -> cv -> model) stays on for every profile.
+#   fast     -> minimum overhead: no per-step model verify, no OCR fallback,
+#               short settle. The a11y/cv fast paths carry the run.
+#   balanced -> library defaults (nothing overridden).
+#   strict   -> maximum evidence: verify every step, OCR fallback on, longer
+#               settle for animation-heavy screens, higher success bar.
+PROFILES: dict[str, dict[str, Any]] = {
+    "fast": {
+        "verify_each_step": False,
+        "enable_ocr": False,
+        "settle_timeout_seconds": 1.0,
+    },
+    "balanced": {},
+    "strict": {
+        "verify_each_step": True,
+        "enable_ocr": True,
+        "settle_timeout_seconds": 3.0,
+        "minimum_success_confidence": 0.9,
+    },
+}
+
 
 @dataclass
 class Config:
@@ -120,3 +146,19 @@ class Config:
         if unknown:
             raise ValueError(f"Unknown configuration keys: {', '.join(unknown)}")
         return cls(**data)
+
+    def apply_profile(self, name: str | None) -> "Config":
+        """Apply a named execution profile in place; return self for chaining.
+
+        A profile is a deliberate CLI intent, so it overrides config.json for the
+        keys it owns (see PROFILES). ``None`` is a no-op; an unknown name raises.
+        """
+        if not name:
+            return self
+        if name not in PROFILES:
+            raise ValueError(
+                f"Unknown profile: {name!r}. Choose from {', '.join(sorted(PROFILES))}."
+            )
+        for key, value in PROFILES[name].items():
+            setattr(self, key, value)
+        return self
