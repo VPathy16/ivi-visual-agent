@@ -29,10 +29,14 @@ cv = ["opencv-python-headless>=4.8,<5", "numpy>=1.24,<2"]
 # over stdio. Run with `ivi-agent-mcp`.
 # Pinned to the 1.x FastMCP API; mcp 2.x renamed FastMCP -> MCPServer.
 mcp = ["mcp>=1.2,<2"]
+# VisionLaya: train the fast image->decision head (frozen backbone + small head).
+# Data export needs none of this; only `visionlaya train` does.
+visionlaya = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"
 ivi-agent-mcp = "ivi_agent.mcp_server:main"
+visionlaya = "visionlaya.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

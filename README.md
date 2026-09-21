@@ -847,6 +847,16 @@ of what a *true* Android IVI validation agent requires is in
 
 The `runs/` directory is intentionally ignored by Git because it can grow quickly.
 
+## VisionLaya (experimental subproject)
+
+[VisionLaya](docs/visionlaya.md) is the plan to replace the slow vision-language
+model, for common learned cases, with a small **non-autoregressive** image→decision
+model (~30ms, calibrated) that falls back to the VLM only on novel screens. The
+agent generates its own training data: `visionlaya export --runs runs --out
+data.jsonl` turns your runs (plus approved paths) into a labeled set — GPU-free —
+and a head-only trainer (frozen backbone + small head) runs on a 16GB Apple-Silicon
+Mac. See [docs/visionlaya.md](docs/visionlaya.md).
+
 ## Current limitations
 
 - Icon-only custom controls still depend on the local vision model's recognition.
