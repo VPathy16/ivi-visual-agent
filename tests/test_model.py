@@ -10,6 +10,33 @@ from ivi_agent.perception import UIElement
 from ivi_agent.types import Action
 
 
+class SemanticAdvanceTests(unittest.TestCase):
+    def _adv(self, target: str, reason: str, goal: str) -> bool:
+        return OllamaVisionModel._candidate_semantically_advances(
+            Action(type="tap", target=target, reason=reason, confidence=0.9), goal
+        )
+
+    def test_direct_token_overlap_passes(self) -> None:
+        self.assertTrue(self._adv("Seat massage", "open it", "Open the seat massage screen"))
+
+    def test_icon_tile_passes_when_reason_ties_to_goal(self) -> None:
+        # "~M~" has no lexical word; the reason connects it to the goal.
+        self.assertTrue(self._adv(
+            "~M~", "Tap the Seat Comfort tile to open the massage screen",
+            "Open the seat massage screen",
+        ))
+
+    def test_icon_tile_rejected_when_reason_unrelated(self) -> None:
+        self.assertFalse(self._adv(
+            "~M~", "Tap the climate fan control", "Open the seat massage screen",
+        ))
+
+    def test_worded_unrelated_target_still_rejected(self) -> None:
+        self.assertFalse(self._adv(
+            "Bluetooth", "open bluetooth settings", "Open the seat massage screen",
+        ))
+
+
 class ModelResponseTests(unittest.TestCase):
     def test_extracts_json_from_plain_response(self) -> None:
         value = OllamaVisionModel._extract_json(

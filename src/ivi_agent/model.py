@@ -453,6 +453,13 @@ class OllamaVisionModel:
         if target_tokens & goal_tokens:
             return True
         reason_tokens = tokens(action.reason)
+        # An icon/symbol tile (e.g. "~M~") yields no lexical word to overlap a
+        # worded goal, so it could never pass the target/goal token test however
+        # correct the tap is. When the target has no real word, judge it by
+        # whether the model's stated reason ties the action to the goal
+        # ("...the Seat Comfort tile to open the massage screen").
+        if not {token for token in target_tokens if len(token) >= 2}:
+            return bool(goal_tokens & reason_tokens)
         return bool(target_tokens & reason_tokens) and bool(goal_tokens & reason_tokens)
 
     @staticmethod
