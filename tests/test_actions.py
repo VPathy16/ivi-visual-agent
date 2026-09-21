@@ -118,6 +118,54 @@ class VerificationOffRunTests(unittest.TestCase):
         self.assertEqual(result.outcome, "pass")  # finished, no verify raised
 
 
+class _RecoveringModel:
+    """First plans an un-executable open_app, then a valid finish."""
+
+    enable_ocr = False
+
+    def __init__(self) -> None:
+        self.plan_calls = 0
+
+    def create_plan(self, goal, knowledge_context=None):
+        return [goal]
+
+    def plan(self, *a, **k):
+        self.plan_calls += 1
+        if self.plan_calls == 1:
+            return Action(type="open_app", app_name="Vehicle Settings",
+                          confidence=0.9, reason="go to settings first")
+        return Action(type="finish", confidence=0.95, reason="done",
+                      outcome="pass", evidence="complete")
+
+    def verify(self, *a, **k):  # pragma: no cover
+        raise AssertionError("verify not expected at verification_level=off")
+
+
+class _ExecFailDevice(_PlainDevice):
+    def execute(self, action, size):  # type: ignore[override]
+        if action.type == "open_app":
+            raise AdbError("Cannot resolve app name to a package: 'Vehicle Settings'.")
+        # other actions are no-ops for the fake
+
+
+class ActionFailureRecoveryTests(unittest.TestCase):
+    def test_unexecutable_action_is_recoverable_not_fatal(self) -> None:
+        device = _ExecFailDevice()
+        model = _RecoveringModel()
+        config = Config()
+        config.verification_level = "off"
+        config.scene_graph = False
+        config.trace = False
+        agent = GoalAgent(device, model, config, knowledge=None)
+        with tempfile.TemporaryDirectory() as out:
+            result = agent.run("Start the seat massage", Path(out))
+        # The failed open_app did not abort the run; it recovered and finished.
+        self.assertEqual(result.outcome, "pass")
+        self.assertEqual(result.steps[0].action.type, "open_app")
+        self.assertIn("Cannot resolve app name", result.steps[0].error or "")
+        self.assertGreaterEqual(model.plan_calls, 2)  # it replanned
+
+
 class CleanStartRunTests(unittest.TestCase):
     def _run(self, relaunch: bool):
         device = _CleanStartDevice()

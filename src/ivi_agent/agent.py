@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .adb import AdbDevice
+from .adb import AdbDevice, AdbError
 from .config import Config
 from .model import OllamaVisionModel
 from .knowledge import KnowledgeBase, prompt_context, reference_images
@@ -925,7 +925,40 @@ class GoalAgent:
                     break
 
                 before = screen_hash
-                self.device.execute(action, size)
+                try:
+                    self.device.execute(action, size)
+                except AdbError as exc:
+                    # A single un-executable action (e.g. open_app on a screen
+                    # name that isn't a package) is recoverable, not fatal: record
+                    # it, tell the model why, block the repeat, and replan next
+                    # step instead of aborting the whole run.
+                    step.error = str(exc)
+                    step.screen_changed = False
+                    remember_failed_action(failed_action_memory, screen_hash, signature)
+                    trace.event(
+                        "execute_error",
+                        step=number,
+                        action=action.type,
+                        target=action.target or action.app_name,
+                        error=str(exc),
+                    )
+                    history.append(
+                        {
+                            "failed_action": action.type,
+                            "target": action.target or action.app_name,
+                            "error": str(exc),
+                            "instruction": (
+                                "That action could not be executed. This IVI is a single "
+                                "app under test — reach other screens by tapping on-screen "
+                                "controls or going back/home, not by launching another app."
+                            ),
+                        }
+                    )
+                    self.progress(
+                        f"Step {number}: action failed ({exc}); replanning"
+                    )
+                    carried_observation = None
+                    continue
                 _phase = time.monotonic()
                 self.device.wait_until_stable(
                     directory,
