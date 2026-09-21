@@ -202,8 +202,18 @@ def parser() -> argparse.ArgumentParser:
     graph_review.add_argument("--profile", required=True, help="Profile name")
     graph_review.add_argument("--root", default="knowledge", help="Knowledge profile root")
     graph_review.add_argument("--finding", required=True, help="Finding id, e.g. F0001")
-    graph_review.add_argument(
-        "--decision", required=True, choices=["approve", "defect"]
+    decision = graph_review.add_mutually_exclusive_group(required=True)
+    decision.add_argument(
+        "--decision", choices=["approve", "defect"], dest="decision",
+        help="approve (legit path — learned into the manual) or defect",
+    )
+    decision.add_argument(
+        "--approve", action="store_const", const="approve", dest="decision",
+        help="shortcut for --decision approve",
+    )
+    decision.add_argument(
+        "--defect", action="store_const", const="defect", dest="decision",
+        help="shortcut for --decision defect",
     )
     return root
 
