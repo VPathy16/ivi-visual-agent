@@ -1,5 +1,7 @@
 # IVI Visual Agent
 
+[![tests](https://github.com/VPathy16/ivi-visual-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/VPathy16/ivi-visual-agent/actions/workflows/tests.yml)
+
 A fully local, goal-driven visual agent for standard Android phones, Android Automotive,
 and Android IVI testing.
 Give it an outcome such as `Open the Bluetooth settings screen`; it observes the current
