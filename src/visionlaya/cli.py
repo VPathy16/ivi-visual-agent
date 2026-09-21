@@ -22,9 +22,17 @@ def _parser() -> argparse.ArgumentParser:
     export.add_argument("--runs", default="runs", help="Run directory root")
     export.add_argument("--out", required=True, help="Output .jsonl path")
 
+    imp = commands.add_parser("import-hf", help="Import a HF Android grounding dataset (needs [hf] extra)")
+    imp.add_argument("--dataset", required=True, choices=["androidcontrol", "screenspot"],
+                     help="Which row mapper to use")
+    imp.add_argument("--hf-path", required=True, help="HF dataset path, e.g. UI-MOPD/AndroidControl-Star")
+    imp.add_argument("--split", default="train")
+    imp.add_argument("--limit", type=int, default=None, help="Max examples to import")
+    imp.add_argument("--out", required=True, help="Output .jsonl path (images saved alongside)")
+
     train = commands.add_parser("train", help="Train a VisionLaya head (needs [visionlaya] extra)")
     train.add_argument("--data", required=True, help="Exported .jsonl dataset")
-    train.add_argument("--task", default="verify", choices=["verify"], help="Which head to train")
+    train.add_argument("--task", default="verify", choices=["verify", "ground"], help="Which head to train")
     train.add_argument("--out", required=True, help="Output model path (.pt)")
     train.add_argument("--backbone", default="mobilevit_xs", help="timm backbone (frozen)")
     train.add_argument("--epochs", type=int, default=20)
@@ -48,12 +56,28 @@ def main() -> None:
             "out": args.out,
         }, indent=2))
         raise SystemExit(0)
-    if args.command == "train":
-        from .train import train_verify_head  # lazy: needs torch
+    if args.command == "import-hf":
+        from .hf import import_hf  # lazy: needs datasets
 
-        summary = train_verify_head(
-            Path(args.data), Path(args.out), backbone=args.backbone, epochs=args.epochs
+        examples = import_hf(
+            args.dataset, args.hf_path, Path(args.out).parent,
+            split=args.split, limit=args.limit,
         )
+        write_jsonl(examples, Path(args.out))
+        print(json.dumps({"imported": len(examples), "dataset": args.dataset,
+                          "hf_path": args.hf_path, "out": args.out}, indent=2))
+        raise SystemExit(0)
+    if args.command == "train":
+        from .train import train_ground_head, train_verify_head  # lazy: needs torch
+
+        if args.task == "ground":
+            summary = train_ground_head(
+                Path(args.data), Path(args.out), backbone=args.backbone, epochs=args.epochs
+            )
+        else:
+            summary = train_verify_head(
+                Path(args.data), Path(args.out), backbone=args.backbone, epochs=args.epochs
+            )
         print(json.dumps(summary, indent=2))
         raise SystemExit(0)
 

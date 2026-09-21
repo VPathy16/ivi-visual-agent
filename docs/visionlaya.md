@@ -60,6 +60,29 @@ visionlaya export --runs runs --out data/visionlaya.jsonl
 # -> {"exported": N, "by_task": {...}, "verify_labels": {"verify:pass": .., "verify:fail": ..}}
 ```
 
+### Bootstrapping from Hugging Face (solve the cold-start)
+
+You don't have to collect hundreds of IVI runs first — import public Android
+grounding data, then fine-tune on your own runs:
+
+```bash
+pip install -e '.[hf]'
+visionlaya import-hf --dataset androidcontrol \
+  --hf-path UI-MOPD/AndroidControl-Star --split train --limit 5000 \
+  --out data/android.jsonl
+# ScreenSpot is best kept as an EVAL set (it's a benchmark).
+```
+
+Each row becomes a GROUND `Example` (image, instruction, tap point). Then train
+on the combined HF + IVI data. **Two honest caveats:**
+- **Domain gap:** these are phone/desktop/web UIs, not automotive IVI — use HF to
+  learn *general* grounding, then fine-tune on your runs for the IVI last mile.
+- **Licenses:** this is a product — many GUI datasets are research-only. Check
+  each dataset's license before shipping a model trained on it.
+
+If the head-only baseline grounds poorly, the fix is a **GUI-grounding-pretrained
+backbone** (pass `--backbone`), not more head training.
+
 Training runs on a 16GB Apple-Silicon MacBook (frozen backbone + small head; MPS
 or CPU). Needs the extra:
 

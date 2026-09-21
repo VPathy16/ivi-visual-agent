@@ -7,6 +7,7 @@ from pathlib import Path
 from PIL import Image
 
 from visionlaya.dataset import export_run, export_dataset, read_jsonl, write_jsonl
+from visionlaya.hf import map_androidcontrol, map_screenspot
 from visionlaya.schema import Example, GROUND, VERIFY
 
 
@@ -83,6 +84,31 @@ class ExportTests(unittest.TestCase):
 
     def test_missing_root(self) -> None:
         self.assertEqual(export_dataset(Path("/no/such/runs")), [])
+
+
+class HfMapperTests(unittest.TestCase):
+    def test_androidcontrol_tap_maps_to_point(self) -> None:
+        row = {"goal": "Open settings", "instruction": "tap the gear",
+               "action": {"x": 0.5, "y": 0.25}}
+        fields = map_androidcontrol(row)
+        self.assertEqual(fields["point"], (0.5, 0.25))
+        self.assertEqual(fields["instruction"], "tap the gear")
+
+    def test_androidcontrol_pixel_coords_normalized(self) -> None:
+        row = {"instruction": "tap x", "action": {"touch_x": 540, "touch_y": 600},
+               "width": 1080, "height": 2400}
+        self.assertEqual(map_androidcontrol(row)["point"], (0.5, 0.25))
+
+    def test_androidcontrol_non_tap_skipped(self) -> None:
+        self.assertIsNone(map_androidcontrol({"instruction": "swipe", "action": "SCROLL_DOWN"}))
+        self.assertIsNone(map_androidcontrol({"instruction": "nothing"}))
+
+    def test_screenspot_bbox_center(self) -> None:
+        row = {"instruction": "the wifi icon", "bbox": [0.4, 0.2, 0.6, 0.4]}
+        self.assertEqual(map_screenspot(row)["point"], (0.5, 0.3))
+
+    def test_screenspot_requires_instruction(self) -> None:
+        self.assertIsNone(map_screenspot({"bbox": [0, 0, 1, 1]}))
 
 
 if __name__ == "__main__":
