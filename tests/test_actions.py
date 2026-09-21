@@ -76,6 +76,48 @@ class _CleanStartDevice(AdbDevice):
         )
 
 
+class _FinishActionModel:
+    """Plans a finish action; verify() must never be called when level=off."""
+
+    enable_ocr = False
+
+    def create_plan(self, goal, knowledge_context=None):
+        return [goal]
+
+    def plan(self, *a, **k):
+        return Action(
+            type="finish", confidence=0.95, reason="believed complete",
+            outcome="pass", evidence="all steps done",
+        )
+
+    def verify(self, *a, **k):  # pragma: no cover - asserts it is not reached
+        raise AssertionError("model.verify must not be called at verification_level=off")
+
+
+class _PlainDevice(_CleanStartDevice):
+    def ui_dump(self) -> str:
+        # A title that does NOT satisfy the goal, so the run proceeds to decide
+        # an action (rather than completing via a title match).
+        return (
+            "<hierarchy><node bounds='[0,0][1080,2400]'>"
+            "<node text='Some screen' bounds='[40,240][300,320]'/>"
+            "</node></hierarchy>"
+        )
+
+
+class VerificationOffRunTests(unittest.TestCase):
+    def test_off_completes_finish_without_model_verify(self) -> None:
+        device = _PlainDevice()
+        config = Config()
+        config.verification_level = "off"
+        config.scene_graph = False
+        config.trace = False
+        agent = GoalAgent(device, _FinishActionModel(), config, knowledge=None)
+        with tempfile.TemporaryDirectory() as out:
+            result = agent.run("Complete the flow", Path(out))
+        self.assertEqual(result.outcome, "pass")  # finished, no verify raised
+
+
 class CleanStartRunTests(unittest.TestCase):
     def _run(self, relaunch: bool):
         device = _CleanStartDevice()

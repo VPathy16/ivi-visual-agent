@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .adb import AdbDevice
 from .agent import GoalAgent
-from .config import Config, PROFILES
+from .config import Config, PROFILES, VERIFICATION_LEVELS
 from .model import OllamaVisionModel
 from .suite import load_suite_cases, run_suite
 
@@ -79,6 +79,12 @@ def parser() -> argparse.ArgumentParser:
         help="Execution profile: fast (minimum overhead) | balanced (default) | "
         "strict (verify every step). config.json / other flags override it.",
     )
+    run.add_argument(
+        "--verification-level",
+        choices=list(VERIFICATION_LEVELS),
+        help="How hard to prove success: off | final | checkpoints | strict. "
+        "Overrides config and profile.",
+    )
 
     suite = commands.add_parser("suite", help="Run independent goals from Home")
     suite.add_argument("--cases", required=True, help="Path to suite case JSON")
@@ -94,6 +100,11 @@ def parser() -> argparse.ArgumentParser:
         dest="exec_profile",
         choices=sorted(PROFILES),
         help="Execution profile: fast | balanced | strict (see `run --help`).",
+    )
+    suite.add_argument(
+        "--verification-level",
+        choices=list(VERIFICATION_LEVELS),
+        help="How hard to prove success: off | final | checkpoints | strict.",
     )
 
     mirror = commands.add_parser("scrcpy", help="Open a live scrcpy view")
@@ -261,6 +272,10 @@ def main() -> None:
             raise SystemExit(0)
         config = Config.load(args.config)
         config.apply_profile(getattr(args, "exec_profile", None))
+        # An explicit --verification-level wins over config and profile.
+        cli_level = getattr(args, "verification_level", None)
+        if cli_level:
+            config.verification_level = cli_level
         if args.command == "doctor":
             raise SystemExit(doctor(config))
         if args.command == "scrcpy":

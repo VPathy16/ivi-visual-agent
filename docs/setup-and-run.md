@@ -213,6 +213,14 @@ Speed vs rigour is one flag: `ivi-agent run --profile fast` (minimum overhead) /
 `balanced` (default) / `strict` (verify every step). It overrides `config.json`
 for the keys it owns.
 
+How hard the agent *proves* success is a second knob, `--verification-level`
+(or `verification_level` in config.json):
+`off` (trust cheap title/cue signals) / `final` (model confirms the overall goal
+once) / `checkpoints` (default — model verifies each step of the final subgoal) /
+`strict` (model verifies every step of every subgoal). `--profile fast` implies
+`final`, `--profile strict` implies `strict`; an explicit `--verification-level`
+wins over both.
+
 For trustworthy results, set `"target_package"` and `"relaunch_before_run": true`
 in `config.json`: the run force-stops and relaunches the app cold before each
 validation, so a "pass" reflects the flow actually happening — not state a

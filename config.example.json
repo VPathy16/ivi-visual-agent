@@ -9,7 +9,7 @@
   "settle_timeout_seconds": 2,
   "settle_poll_seconds": 0.2,
   "reuse_after_state": true,
-  "verify_each_step": true,
+  "verification_level": "checkpoints",
   "prefer_ui_tree": true,
   "enable_ocr": true,
   "max_image_dimension": 768,

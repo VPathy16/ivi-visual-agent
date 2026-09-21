@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .adb import AdbDevice
-from .config import Config, PROFILES
+from .config import Config, PROFILES, VERIFICATION_LEVELS
 from .knowledge import KnowledgeBase
 from .embeddings import resolve_text_embedder
 from .model import OllamaVisionModel
@@ -120,6 +120,7 @@ def run_validation(
     knowledge_profile: Optional[str] = None,
     knowledge_root: Optional[str] = None,
     exec_profile: Optional[str] = None,
+    verification_level: Optional[str] = None,
     serial: Optional[str] = None,
     display_id: Optional[int] = None,
     output: str = "runs",
@@ -130,6 +131,8 @@ def run_validation(
 ) -> dict[str, Any]:
     """Run one goal against the connected IVI and return a result summary."""
     config = _build_config(config_path, exec_profile)
+    if verification_level:
+        config.verification_level = verification_level
     device = device or AdbDevice(serial, display_id)
     model = model or _build_model(config)
     if knowledge is None:
@@ -301,6 +304,7 @@ def build_server():  # type: ignore[no-untyped-def]
 
     mcp = FastMCP("ivi_agent_mcp")
     _profiles = ", ".join(sorted(PROFILES))
+    _levels = ", ".join(VERIFICATION_LEVELS)
 
     class _Base(BaseModel):
         model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
@@ -311,6 +315,7 @@ def build_server():  # type: ignore[no-untyped-def]
         knowledge_profile: Optional[str] = Field(default=None, description="Local manual knowledge profile (e.g. 'benz')")
         knowledge_root: Optional[str] = Field(default=None, description="Directory holding knowledge profiles")
         exec_profile: Optional[str] = Field(default=None, description=f"Execution profile: {_profiles}")
+        verification_level: Optional[str] = Field(default=None, description=f"How hard to prove success: {_levels}")
         serial: Optional[str] = Field(default=None, description="ADB device serial")
         display_id: Optional[int] = Field(default=None, description="Android display id", ge=0)
         output: str = Field(default="runs", description="Evidence output directory")
@@ -359,7 +364,8 @@ def build_server():  # type: ignore[no-untyped-def]
             return json.dumps(run_validation(
                 params.goal, config_path=params.config_path,
                 knowledge_profile=params.knowledge_profile, knowledge_root=params.knowledge_root,
-                exec_profile=params.exec_profile, serial=params.serial,
+                exec_profile=params.exec_profile, verification_level=params.verification_level,
+                serial=params.serial,
                 display_id=params.display_id, output=params.output, dry_run=params.dry_run,
             ), indent=2, default=str)
         except Exception as exc:  # noqa: BLE001

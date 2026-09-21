@@ -604,13 +604,13 @@ class GoalAgent:
                         f"Subgoal {current_subgoal.number} observed; advancing"
                     )
                     current_subgoal = result.subgoals[current_subgoal_index]
-                if (
-                    getattr(self.config, "verify_each_step", True)
-                    and current_subgoal_index == len(result.subgoals) - 1
-                    and number > 1
-                ):
+                is_final_subgoal = current_subgoal_index == len(result.subgoals) - 1
+                if self.config.verify_step(is_final_subgoal) and number > 1:
+                    # strict verifies every subgoal; checkpoints only the final
+                    # one. Verify the milestone this step pursues.
+                    verify_goal = goal if is_final_subgoal else current_subgoal.description
                     verification = self.model.verify(
-                        goal,
+                        verify_goal,
                         image,
                         ui_dump,
                         knowledge_context=step_context,
@@ -623,8 +623,10 @@ class GoalAgent:
                     )
                     trace.event(
                         "verify",
-                        scope="final_subgoal",
+                        scope="per_step",
                         step=number,
+                        subgoal_index=current_subgoal_index,
+                        is_final=is_final_subgoal,
                         outcome=outcome,
                         confidence=round(confidence, 3),
                         evidence=evidence,
@@ -635,10 +637,25 @@ class GoalAgent:
                     ):
                         current_subgoal.status = "passed"
                         current_subgoal.evidence = evidence
-                        result.outcome = "pass"
-                        result.reason = evidence
-                        self.progress("Final goal independently verified")
-                        break
+                        if is_final_subgoal:
+                            result.outcome = "pass"
+                            result.reason = evidence
+                            self.progress("Final goal independently verified")
+                            break
+                        # strict: milestone proven, advance to the next subgoal.
+                        current_subgoal_index += 1
+                        result.subgoals[current_subgoal_index].status = "running"
+                        history.append(
+                            {
+                                "completed_subgoal": current_subgoal.description,
+                                "evidence": evidence,
+                                "next_subgoal": result.subgoals[current_subgoal_index].description,
+                            }
+                        )
+                        self.progress(
+                            f"Subgoal {current_subgoal.number} verified; advancing"
+                        )
+                        continue
                 self.progress(
                     f"Step {number}: observing and pursuing subgoal "
                     f"{current_subgoal.number}/{len(result.subgoals)}"
@@ -726,30 +743,32 @@ class GoalAgent:
                         )
                         self.progress(f"Goal already satisfied (cue {final_cue!r})")
                         break
-                    # Otherwise fall back to a full model verify: fine-grained
-                    # subgoals (e.g. "select a program") may lack a clean signal, so
-                    # the agent can finish the goal while the tracker lags and loop.
-                    overall = self.model.verify(
-                        goal,
-                        image,
-                        ui_dump,
-                        knowledge_context=step_context,
-                        reference_images=step_references,
-                    )
-                    if (
-                        str(overall.get("outcome")) == "pass"
-                        and float(overall.get("confidence", 0.0))
-                        >= self.config.minimum_success_confidence
-                    ):
-                        evidence = str(overall.get("evidence", "Goal already satisfied"))
-                        for prior in result.subgoals:
-                            if prior.status != "passed":
-                                prior.status = "passed"
-                                prior.evidence = evidence
-                        result.outcome = "pass"
-                        result.reason = evidence
-                        self.progress("Overall goal already satisfied; finishing")
-                        break
+                    # Otherwise fall back to a full model verify (unless
+                    # verification is off): fine-grained subgoals (e.g. "select a
+                    # program") may lack a clean signal, so the agent can finish
+                    # the goal while the tracker lags and loop.
+                    if self.config.uses_model_verify():
+                        overall = self.model.verify(
+                            goal,
+                            image,
+                            ui_dump,
+                            knowledge_context=step_context,
+                            reference_images=step_references,
+                        )
+                        if (
+                            str(overall.get("outcome")) == "pass"
+                            and float(overall.get("confidence", 0.0))
+                            >= self.config.minimum_success_confidence
+                        ):
+                            evidence = str(overall.get("evidence", "Goal already satisfied"))
+                            for prior in result.subgoals:
+                                if prior.status != "passed":
+                                    prior.status = "passed"
+                                    prior.evidence = evidence
+                            result.outcome = "pass"
+                            result.reason = evidence
+                            self.progress("Overall goal already satisfied; finishing")
+                            break
                     history.append(
                         {
                             "blocked_repetition": repr(signature),
@@ -815,6 +834,33 @@ class GoalAgent:
                         if current_subgoal_index == len(result.subgoals) - 1
                         else current_subgoal.description
                     )
+                    if not self.config.uses_model_verify():
+                        # verification off: trust the finish action, complete
+                        # deterministically without a model call.
+                        evidence = "Finish action accepted (verification off)"
+                        current_subgoal.status = "passed"
+                        current_subgoal.evidence = evidence
+                        trace.event(
+                            "verify", scope="finish_action", step=number,
+                            outcome="pass", verification="off",
+                        )
+                        if current_subgoal_index == len(result.subgoals) - 1:
+                            result.outcome = "pass"
+                            result.reason = evidence
+                            break
+                        current_subgoal_index += 1
+                        result.subgoals[current_subgoal_index].status = "running"
+                        history.append(
+                            {
+                                "completed_subgoal": current_subgoal.description,
+                                "evidence": evidence,
+                                "next_subgoal": result.subgoals[current_subgoal_index].description,
+                            }
+                        )
+                        self.progress(
+                            f"Subgoal {current_subgoal.number} accepted (verification off); advancing"
+                        )
+                        continue
                     verification = self.model.verify(
                         verification_goal,
                         image,

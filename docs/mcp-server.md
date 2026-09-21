@@ -46,8 +46,9 @@ The same `command`/`args` shape works for Antigravity, Cursor and Windsurf. Run
 | `ivi_doctor` | yes | Preflight local dependencies (adb, scrcpy, ollama, tesseract) and model availability. |
 
 All inputs mirror the CLI (`config_path`, `knowledge_profile`, `serial`,
-`display_id`, and the `exec_profile` = `fast|balanced|strict`). Tools return
-JSON strings.
+`display_id`, the `exec_profile` = `fast|balanced|strict`, and
+`verification_level` = `off|final|checkpoints|strict`). Tools return JSON
+strings.
 
 ## Notes
 

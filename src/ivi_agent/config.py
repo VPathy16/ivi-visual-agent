@@ -16,15 +16,27 @@ from typing import Any
 #   balanced -> library defaults (nothing overridden).
 #   strict   -> maximum evidence: verify every step, OCR fallback on, longer
 #               settle for animation-heavy screens, higher success bar.
+# How hard the agent works to *prove* a goal was reached, trading speed for
+# confidence (ARTEMIS-style off/final/checkpoints/strict):
+#   off         -> never call the vision model to verify; trust cheap signals
+#                  (screen title match, manual success_text cues). Fastest.
+#   final       -> cheap signals drive the run; the model confirms only the
+#                  OVERALL goal (finish / already-satisfied). One check.
+#   checkpoints -> final + the model verifies each step while pursuing the final
+#                  subgoal (catches the goal flipping mid-step). (Default.)
+#   strict      -> the model verifies every step of every subgoal, so each
+#                  milestone is independently proven. Slowest, most defensible.
+VERIFICATION_LEVELS = ("off", "final", "checkpoints", "strict")
+
 PROFILES: dict[str, dict[str, Any]] = {
     "fast": {
-        "verify_each_step": False,
+        "verification_level": "final",
         "enable_ocr": False,
         "settle_timeout_seconds": 1.0,
     },
     "balanced": {},
     "strict": {
-        "verify_each_step": True,
+        "verification_level": "strict",
         "enable_ocr": True,
         "settle_timeout_seconds": 3.0,
         "minimum_success_confidence": 0.9,
@@ -64,10 +76,14 @@ class Config:
     # Ollama context window (num_ctx). A screenshot + UI candidates + history can
     # exceed Ollama's 4096 default, causing HTTP 400 exceed_context_size errors.
     model_context_tokens: int = 8192
-    # If True, the AndroidWorld adapter verifies completion before planning on each
-    # step of the final subgoal. This ends state-change tasks as soon as the state
-    # flips (fewer steps overall), and prevents the agent from re-toggling a control
-    # it already set. Default True; set False only for pure navigation runs.
+    # How hard the agent proves success: off | final | checkpoints | strict
+    # (see VERIFICATION_LEVELS). Default "checkpoints" keeps the historical
+    # behaviour (model-verify each step of the final subgoal). Set via
+    # config.json or --profile (fast->final, strict->strict).
+    verification_level: str = "checkpoints"
+    # Legacy alias, superseded by verification_level and no longer read by the
+    # agent. Kept so older config.json files still load; the AndroidWorld adapter
+    # still honours it for its own loop.
     verify_each_step: bool = True
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
@@ -141,6 +157,28 @@ class Config:
     def __post_init__(self) -> None:
         if self.protected_regions is None:
             self.protected_regions = []
+        if self.verification_level not in VERIFICATION_LEVELS:
+            raise ValueError(
+                f"Unknown verification_level: {self.verification_level!r}. "
+                f"Choose from {', '.join(VERIFICATION_LEVELS)}."
+            )
+
+    def uses_model_verify(self) -> bool:
+        """Whether the vision model is used to verify success at all."""
+        return self.verification_level != "off"
+
+    def verify_step(self, is_final_subgoal: bool) -> bool:
+        """Whether to model-verify the current step, given the subgoal it pursues.
+
+        strict verifies every step; checkpoints verifies only while on the final
+        subgoal; final/off never verify per step (they rely on cheap signals and,
+        for final, a single overall/finish check).
+        """
+        if self.verification_level == "strict":
+            return True
+        if self.verification_level == "checkpoints":
+            return is_final_subgoal
+        return False
 
     @classmethod
     def load(cls, path: str | None) -> "Config":
