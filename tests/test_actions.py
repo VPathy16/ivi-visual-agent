@@ -1,5 +1,6 @@
 import io
 import json
+import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -8,10 +9,95 @@ from unittest import mock
 from PIL import Image
 
 from ivi_agent.adb import AdbDevice, AdbError
+from ivi_agent.agent import GoalAgent
 from ivi_agent.config import Config
 from ivi_agent.model import ACTION_SCHEMA, GROUNDING_SCHEMA, OllamaVisionModel
 from ivi_agent.policy import PolicyViolation, validate_action
 from ivi_agent.types import Action
+
+
+def _small_png() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (48, 96), "black").save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class _FinishingModel:
+    """A model that plans one subgoal and never needs to plan/verify, because the
+    run finishes via a title match on the first observation."""
+
+    enable_ocr = False
+
+    def create_plan(self, goal, knowledge_context=None):
+        return [goal]
+
+    def plan(self, *a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("model.plan should not be called")
+
+    def verify(self, *a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("model.verify should not be called")
+
+
+class _CleanStartDevice(AdbDevice):
+    """Fake device whose Home screen satisfies the goal immediately."""
+
+    def __init__(self) -> None:
+        super().__init__(serial="emulator-5554")
+        self.relaunched: list[str] = []
+
+    def ensure_ready(self) -> None:
+        pass
+
+    def wake_if_needed(self) -> None:
+        pass
+
+    def clear_logcat(self) -> None:
+        pass
+
+    def logcat_dump(self, tail_lines: int = 4000) -> str:
+        return ""
+
+    def relaunch(self, package: str) -> None:
+        self.relaunched.append(package)
+
+    def screen_size(self):  # type: ignore[override]
+        return (1080, 2400)
+
+    def capture(self, destination: Path) -> bytes:
+        data = _small_png()
+        Path(destination).write_bytes(data)
+        return data
+
+    def ui_dump(self) -> str:
+        return (
+            "<hierarchy><node bounds='[0,0][1080,2400]'>"
+            "<node text='Home' bounds='[40,240][300,320]'/>"
+            "</node></hierarchy>"
+        )
+
+
+class CleanStartRunTests(unittest.TestCase):
+    def _run(self, relaunch: bool):
+        device = _CleanStartDevice()
+        config = Config()
+        config.relaunch_before_run = relaunch
+        config.target_package = "com.example.iviwv"
+        config.scene_graph = False
+        config.trace = False
+        agent = GoalAgent(device, _FinishingModel(), config, knowledge=None)
+        with tempfile.TemporaryDirectory() as out:
+            result = agent.run("Reach the Home screen", Path(out))
+        return device, result
+
+    def test_relaunches_when_enabled(self) -> None:
+        device, result = self._run(relaunch=True)
+        self.assertEqual(device.relaunched, ["com.example.iviwv"])
+        self.assertEqual(result.outcome, "pass")
+
+    def test_no_relaunch_when_disabled(self) -> None:
+        device, result = self._run(relaunch=False)
+        self.assertEqual(device.relaunched, [])
+        self.assertEqual(result.outcome, "pass")
 
 
 class RecordingDevice(AdbDevice):
@@ -22,6 +108,36 @@ class RecordingDevice(AdbDevice):
     def _run(self, *args, binary=False, timeout=20):  # type: ignore[override]
         self.calls.append(args)
         return b"" if binary else ""
+
+
+class CleanStartTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.device = RecordingDevice()
+        self._sleep = mock.patch("ivi_agent.adb.time.sleep", return_value=None)
+        self._sleep.start()
+
+    def tearDown(self) -> None:
+        self._sleep.stop()
+
+    def test_force_stop_issues_am_force_stop(self) -> None:
+        self.device.force_stop("com.example.iviwv")
+        self.assertIn(("shell", "am", "force-stop", "com.example.iviwv"), self.device.calls)
+
+    def test_relaunch_stops_then_launches_in_order(self) -> None:
+        self.device.relaunch("com.example.iviwv")
+        stop_idx = self.device.calls.index(("shell", "am", "force-stop", "com.example.iviwv"))
+        launch_idx = next(
+            i for i, c in enumerate(self.device.calls)
+            if c[:3] == ("shell", "monkey", "-p")
+        )
+        self.assertLess(stop_idx, launch_idx)  # cold: stop before launch
+
+    def test_relaunch_rejects_bad_package(self) -> None:
+        for bad in ("not a package", "single", ""):
+            with self.assertRaises(AdbError):
+                self.device.relaunch(bad)
+        # A bad package must not have issued any force-stop.
+        self.assertFalse(any(c[:3] == ("shell", "am", "force-stop") for c in self.device.calls))
 
 
 class ExpandedPolicyTests(unittest.TestCase):

@@ -323,10 +323,15 @@ def extract_tree_headings(ui_dump: str, limit: int = 4) -> list[str]:
     except ET.ParseError:
         return []
     parsed: list[tuple[str, tuple[int, int, int, int]]] = []
+    # Screen height comes from ALL nodes (the full-screen root container), not
+    # just text nodes — otherwise a screen with a single heading measures its
+    # position against its own height and is wrongly filtered out.
+    screen_bottom = 0
     for node in root.iter("node"):
         bounds = parse_bounds(node.attrib.get("bounds", ""))
         if not bounds:
             continue
+        screen_bottom = max(screen_bottom, bounds[3])
         text = " ".join(node.attrib.get("text", "").split())
         if not text:
             text = " ".join(node.attrib.get("content-desc", "").split())
@@ -334,7 +339,7 @@ def extract_tree_headings(ui_dump: str, limit: int = 4) -> list[str]:
             parsed.append((text, bounds))
     if not parsed:
         return []
-    screen_height = max(bounds[3] for _, bounds in parsed) or 1
+    screen_height = screen_bottom or 1
     candidates = [
         (text, bounds)
         for text, bounds in parsed

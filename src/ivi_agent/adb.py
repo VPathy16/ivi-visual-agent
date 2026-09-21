@@ -205,20 +205,40 @@ class AdbDevice:
     def type_text(self, text: str) -> None:
         self._run("shell", "input", "text", self._escape_input_text(text))
 
-    def open_app(self, app_name: str) -> None:
-        """Best-effort launch by package name for the standalone agent.
-
-        The AndroidWorld adapter never calls this; it delegates open_app to the
-        benchmark environment, which resolves human app names to packages.
-        """
+    @staticmethod
+    def _require_package(app_name: str) -> str:
         package = app_name.strip()
         if not re.fullmatch(r"[A-Za-z][\w]*(?:\.[A-Za-z0-9_]+)+", package):
             raise AdbError(
                 f"Cannot resolve app name to a package: {app_name!r}. "
                 "Provide a package id (e.g. com.android.settings) or tap the launcher."
             )
+        return package
+
+    def open_app(self, app_name: str) -> None:
+        """Best-effort launch by package name for the standalone agent.
+
+        The AndroidWorld adapter never calls this; it delegates open_app to the
+        benchmark environment, which resolves human app names to packages.
+        """
+        package = self._require_package(app_name)
         self._run("shell", "monkey", "-p", package, "-c", "android.intent.category.LAUNCHER", "1")
         time.sleep(1.0)
+
+    def force_stop(self, package: str) -> None:
+        """Stop an app so its next launch starts cold, from a known state."""
+        self._run("shell", "am", "force-stop", self._require_package(package), timeout=10)
+
+    def relaunch(self, package: str) -> None:
+        """Force-stop then launch an app, so a run begins from a clean state.
+
+        Used for clean-start test hygiene: without it a run can start on state a
+        previous run left behind (e.g. a feature already toggled on), so a
+        "pass" may only mean the goal was already satisfied before the test.
+        """
+        package = self._require_package(package)
+        self.force_stop(package)
+        self.open_app(package)
 
     def execute(self, action: Action, size: tuple[int, int]) -> None:
         width, height = size

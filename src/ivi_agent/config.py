@@ -125,6 +125,12 @@ class Config:
     target_package: str = ""
     fail_on_crash: bool = True
     log_tail_lines: int = 4000
+    # Clean-start test hygiene. When enabled (and target_package is set), the run
+    # force-stops and relaunches the app before starting, so every validation
+    # begins from a known cold state instead of whatever a previous run left
+    # behind. Off by default so it never surprises an existing setup; turn it on
+    # for trustworthy regression results. No-op without target_package.
+    relaunch_before_run: bool = False
     # Living scene graph. When a knowledge profile is active, seed an expected
     # screen graph from the manual, then confirm nodes/edges as the agent reaches
     # screens and flag screens/transitions that diverge from the manual as

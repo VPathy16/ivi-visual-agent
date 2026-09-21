@@ -51,6 +51,10 @@ class ProfileTests(unittest.TestCase):
             self.assertFalse(config.verify_each_step)
             self.assertEqual(config.model, "custom:1b")  # untouched key preserved
 
+    def test_relaunch_before_run_defaults_off(self) -> None:
+        # Clean-start must be opt-in so it never surprises an existing setup.
+        self.assertFalse(Config().relaunch_before_run)
+
     def test_profiles_only_touch_known_fields(self) -> None:
         known = {f for f in vars(Config()).keys()}
         for name, overrides in PROFILES.items():

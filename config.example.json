@@ -34,5 +34,6 @@
   "scene_graph": true,
   "capture_logs": true,
   "target_package": "",
-  "fail_on_crash": true
+  "fail_on_crash": true,
+  "relaunch_before_run": false
 }

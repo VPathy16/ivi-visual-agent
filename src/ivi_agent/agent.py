@@ -361,6 +361,19 @@ class GoalAgent:
             self.device.wake_if_needed()
             if getattr(self.config, "capture_logs", True):
                 self.device.clear_logcat()
+            # Clean-start hygiene: relaunch the app cold so the run begins from a
+            # known state rather than whatever a previous run left behind. Done
+            # after clearing logcat so the fresh launch is captured for crash
+            # scanning. Best-effort: a relaunch failure must not abort the run.
+            target = getattr(self.config, "target_package", "")
+            if getattr(self.config, "relaunch_before_run", False) and target:
+                try:
+                    self.progress(f"Clean start: relaunching {target}")
+                    self.device.relaunch(target)
+                    trace.event("clean_start", package=target)
+                except Exception as exc:  # noqa: BLE001 - relaunch is advisory
+                    self.progress(f"clean start relaunch failed: {exc}")
+                    trace.event("clean_start", package=target, error=str(exc))
             size = self.device.screen_size()
             _add_phase("startup", _phase)
             _phase = time.monotonic()

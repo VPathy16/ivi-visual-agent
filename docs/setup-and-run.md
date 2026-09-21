@@ -213,6 +213,11 @@ Speed vs rigour is one flag: `ivi-agent run --profile fast` (minimum overhead) /
 `balanced` (default) / `strict` (verify every step). It overrides `config.json`
 for the keys it owns.
 
+For trustworthy results, set `"target_package"` and `"relaunch_before_run": true`
+in `config.json`: the run force-stops and relaunches the app cold before each
+validation, so a "pass" reflects the flow actually happening — not state a
+previous run left behind. Off by default.
+
 To drive validations from an MCP client (Claude Code, Antigravity, Cursor),
 install the server with `pip install -e '.[mcp]'` and run `ivi-agent-mcp`. See
 [docs/mcp-server.md](mcp-server.md) for the tools and client config.
