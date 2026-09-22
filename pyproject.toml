@@ -35,6 +35,9 @@ mcp = ["mcp>=1.2,<2"]
 visionlaya = ["torch>=2.2", "torchvision>=0.17", "timm>=1.0", "sentence-transformers>=3.0"]
 # Import public Android grounding datasets from Hugging Face (visionlaya import-hf).
 hf = ["datasets>=2.19"]
+# Windows desktop (.exe) backend via Appium/WinAppDriver. The UIA->uiautomator
+# adapter needs none of this; only opening a live WinAppDriver session does.
+windows = ["Appium-Python-Client>=3.1"]
 
 [project.scripts]
 ivi-agent = "ivi_agent.cli:main"
