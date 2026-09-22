@@ -2,12 +2,56 @@ import unittest
 import io
 
 from typing import Any
+from unittest import mock
 
 from PIL import Image
 
 from ivi_agent.model import ACTION_SCHEMA, OllamaVisionModel
 from ivi_agent.perception import UIElement
 from ivi_agent.types import Action
+
+
+class WarmupTests(unittest.TestCase):
+    def _model(self) -> OllamaVisionModel:
+        return OllamaVisionModel("http://127.0.0.1:11434", "qwen3-vl:8b-instruct")
+
+    def test_warmup_returns_true_on_success(self) -> None:
+        with mock.patch("ivi_agent.model.urllib.request.urlopen") as urlopen:
+            urlopen.return_value.__enter__.return_value.read.return_value = b"{}"
+            self.assertTrue(self._model().warmup())
+
+    def test_warmup_swallows_failure(self) -> None:
+        with mock.patch(
+            "ivi_agent.model.urllib.request.urlopen", side_effect=OSError("down")
+        ):
+            self.assertFalse(self._model().warmup())
+
+
+class SemanticAdvanceTests(unittest.TestCase):
+    def _adv(self, target: str, reason: str, goal: str) -> bool:
+        return OllamaVisionModel._candidate_semantically_advances(
+            Action(type="tap", target=target, reason=reason, confidence=0.9), goal
+        )
+
+    def test_direct_token_overlap_passes(self) -> None:
+        self.assertTrue(self._adv("Seat massage", "open it", "Open the seat massage screen"))
+
+    def test_icon_tile_passes_when_reason_ties_to_goal(self) -> None:
+        # "~M~" has no lexical word; the reason connects it to the goal.
+        self.assertTrue(self._adv(
+            "~M~", "Tap the Seat Comfort tile to open the massage screen",
+            "Open the seat massage screen",
+        ))
+
+    def test_icon_tile_rejected_when_reason_unrelated(self) -> None:
+        self.assertFalse(self._adv(
+            "~M~", "Tap the climate fan control", "Open the seat massage screen",
+        ))
+
+    def test_worded_unrelated_target_still_rejected(self) -> None:
+        self.assertFalse(self._adv(
+            "Bluetooth", "open bluetooth settings", "Open the seat massage screen",
+        ))
 
 
 class ModelResponseTests(unittest.TestCase):

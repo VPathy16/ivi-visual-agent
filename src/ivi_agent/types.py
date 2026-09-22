@@ -90,6 +90,8 @@ class RunResult:
     # Populated at finish when a scene graph is active: coverage + pending
     # divergence findings (candidate HMI defects awaiting user review).
     scene_graph: dict[str, Any] = field(default_factory=dict)
+    # Fatal events (crashes / ANRs) detected in logcat during the run.
+    crashes: list[dict[str, Any]] = field(default_factory=list)
     started_at: str = ""
     finished_at: str = ""
 

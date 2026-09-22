@@ -1,26 +1,30 @@
 from __future__ import annotations
 
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from .adb import AdbDevice
+from .adb import AdbDevice, AdbError
 from .config import Config
 from .model import OllamaVisionModel
 from .knowledge import KnowledgeBase, prompt_context, reference_images
 from .perception import (
     extract_ocr_screen_titles,
     extract_screen_titles,
+    extract_tree_headings,
     extract_ui_elements,
     extract_visible_text,
     hash_distance,
     perceptual_hash,
 )
 from .graph import SceneGraph
+from .logs import crash_summary, scan_crashes
 from .policy import PolicyViolation, validate_action
 from .report import write_report
+from .replay import build_replay
 from .trace import NullTrace, RunTrace
 from .types import Action, RunResult, StepRecord, SubgoalRecord
 from .vision_match import cv_ground_from_knowledge
@@ -336,16 +340,56 @@ class GoalAgent:
         history: list[dict[str, object]] = []
         failed_action_memory: list[tuple[int, set[tuple[object, ...]]]] = []
         current_subgoal_index = 0
+        # Carry the post-action observation forward as the next step's start
+        # observation, so we don't re-capture + re-`uiautomator dump` the same
+        # screen twice per step. (image_bytes, ui_dump, perceptual_hash).
+        carried_observation: tuple[bytes, str, int] | None = None
+        # Wall-time by phase, so a slow run points at its own culprit (startup
+        # device I/O, retrieval, per-step capture / uiautomator dump / settle,
+        # teardown) instead of leaving only an opaque total. The dict is handed
+        # to result.grounding by reference, so phases timed after that (logcat)
+        # still appear.
+        phase_seconds: dict[str, float] = {}
+
+        def _add_phase(name: str, started_at: float) -> None:
+            phase_seconds[name] = round(
+                phase_seconds.get(name, 0.0) + (time.monotonic() - started_at), 3
+            )
 
         try:
+            # Warm the model in the background so its cold load overlaps the
+            # first capture + uiautomator dump instead of stalling the first
+            # decision. Best-effort; a cold first call still works.
+            warmup = getattr(self.model, "warmup", None)
+            if callable(warmup):
+                threading.Thread(target=warmup, daemon=True).start()
+            _phase = time.monotonic()
             self.device.ensure_ready()
             self.device.wake_if_needed()
+            if getattr(self.config, "capture_logs", True):
+                self.device.clear_logcat()
+            # Clean-start hygiene: relaunch the app cold so the run begins from a
+            # known state rather than whatever a previous run left behind. Done
+            # after clearing logcat so the fresh launch is captured for crash
+            # scanning. Best-effort: a relaunch failure must not abort the run.
+            target = getattr(self.config, "target_package", "")
+            if getattr(self.config, "relaunch_before_run", False) and target:
+                try:
+                    self.progress(f"Clean start: relaunching {target}")
+                    self.device.relaunch(target)
+                    trace.event("clean_start", package=target)
+                except Exception as exc:  # noqa: BLE001 - relaunch is advisory
+                    self.progress(f"clean start relaunch failed: {exc}")
+                    trace.event("clean_start", package=target, error=str(exc))
             size = self.device.screen_size()
+            _add_phase("startup", _phase)
+            _phase = time.monotonic()
             initial_knowledge = (
                 self.knowledge.query(goal, self.config.knowledge_top_k)
                 if self.knowledge
                 else {}
             )
+            _add_phase("retrieval", _phase)
             initial_context = prompt_context(initial_knowledge) if initial_knowledge else {}
             if initial_knowledge:
                 result.knowledge = {
@@ -368,7 +412,9 @@ class GoalAgent:
                     chunk_ids=result.knowledge["retrieved_chunk_ids"],
                 )
             self.progress("Planning observable subgoals")
+            _phase = time.monotonic()
             plan = self.model.create_plan(goal, initial_context)
+            _add_phase("planning", _phase)
             result.subgoals = [
                 SubgoalRecord(number=index + 1, description=description)
                 for index, description in enumerate(plan)
@@ -417,29 +463,54 @@ class GoalAgent:
                     break
                 screenshot_name = f"step-{number:02d}.png"
                 screenshot_path = directory / screenshot_name
-                self.progress(f"Step {number}: capturing device state")
-                image = self.device.capture(screenshot_path)
-                try:
-                    ui_dump = self.device.ui_dump()
-                except Exception:
-                    ui_dump = ""
-                screen_hash = perceptual_hash(image)
+                if carried_observation is not None and getattr(
+                    self.config, "reuse_after_state", True
+                ):
+                    # Reuse the previous step's post-action screen instead of a
+                    # fresh capture + uiautomator dump (same screen, no round-trip).
+                    image, ui_dump, screen_hash = carried_observation
+                    try:
+                        screenshot_path.write_bytes(image)
+                    except Exception:  # noqa: BLE001 - screenshot is evidence only
+                        pass
+                else:
+                    self.progress(f"Step {number}: capturing device state")
+                    _phase = time.monotonic()
+                    image = self.device.capture(screenshot_path)
+                    _add_phase("capture", _phase)
+                    _phase = time.monotonic()
+                    try:
+                        ui_dump = self.device.ui_dump()
+                    except Exception:
+                        ui_dump = ""
+                    _add_phase("ui_dump", _phase)
+                    screen_hash = perceptual_hash(image)
+                carried_observation = None
                 blocked_signatures = blocked_actions_for_state(
                     failed_action_memory, screen_hash
                 )
                 current_subgoal = result.subgoals[current_subgoal_index]
                 observed_titles = extract_screen_titles(ui_dump)
+                if not observed_titles:
+                    # The tree usually still holds the heading (WebView/Flutter/
+                    # custom IVI UIs just don't tag it with a title resource-id),
+                    # so read it from the tree before paying for a ~10s OCR pass.
+                    observed_titles = extract_tree_headings(ui_dump)
                 if not observed_titles and self.model.enable_ocr:
+                    _phase = time.monotonic()
                     observed_titles = extract_ocr_screen_titles(image)
+                    _add_phase("ocr", _phase)
                 visible_text = extract_visible_text(ui_dump)
                 retrieval_query = " ".join(
                     [goal, current_subgoal.description, *observed_titles, *visible_text[:12]]
                 )
+                _phase = time.monotonic()
                 step_knowledge = (
                     self.knowledge.query(retrieval_query, self.config.knowledge_top_k)
                     if self.knowledge
                     else {}
                 )
+                _add_phase("step_retrieval", _phase)
                 step_context = (
                     prompt_context(step_knowledge, current_subgoal.description)
                     if step_knowledge
@@ -462,6 +533,7 @@ class GoalAgent:
                 # Grow the living scene graph with the screen we just reached,
                 # attributing the transition to the previous step's action.
                 if scene_graph is not None:
+                    _phase = time.monotonic()
                     observation = scene_graph.observe(
                         observed_titles,
                         phash=screen_hash,
@@ -471,6 +543,7 @@ class GoalAgent:
                         via_action=graph_last_action[0],
                         via_target=graph_last_action[1],
                     )
+                    _add_phase("graph_observe", _phase)
                     graph_prev_node = observation.node_id
                     trace.event(
                         "graph_observe",
@@ -538,13 +611,13 @@ class GoalAgent:
                         f"Subgoal {current_subgoal.number} observed; advancing"
                     )
                     current_subgoal = result.subgoals[current_subgoal_index]
-                if (
-                    getattr(self.config, "verify_each_step", True)
-                    and current_subgoal_index == len(result.subgoals) - 1
-                    and number > 1
-                ):
+                is_final_subgoal = current_subgoal_index == len(result.subgoals) - 1
+                if self.config.verify_step(is_final_subgoal) and number > 1:
+                    # strict verifies every subgoal; checkpoints only the final
+                    # one. Verify the milestone this step pursues.
+                    verify_goal = goal if is_final_subgoal else current_subgoal.description
                     verification = self.model.verify(
-                        goal,
+                        verify_goal,
                         image,
                         ui_dump,
                         knowledge_context=step_context,
@@ -557,8 +630,10 @@ class GoalAgent:
                     )
                     trace.event(
                         "verify",
-                        scope="final_subgoal",
+                        scope="per_step",
                         step=number,
+                        subgoal_index=current_subgoal_index,
+                        is_final=is_final_subgoal,
                         outcome=outcome,
                         confidence=round(confidence, 3),
                         evidence=evidence,
@@ -569,10 +644,25 @@ class GoalAgent:
                     ):
                         current_subgoal.status = "passed"
                         current_subgoal.evidence = evidence
-                        result.outcome = "pass"
-                        result.reason = evidence
-                        self.progress("Final goal independently verified")
-                        break
+                        if is_final_subgoal:
+                            result.outcome = "pass"
+                            result.reason = evidence
+                            self.progress("Final goal independently verified")
+                            break
+                        # strict: milestone proven, advance to the next subgoal.
+                        current_subgoal_index += 1
+                        result.subgoals[current_subgoal_index].status = "running"
+                        history.append(
+                            {
+                                "completed_subgoal": current_subgoal.description,
+                                "evidence": evidence,
+                                "next_subgoal": result.subgoals[current_subgoal_index].description,
+                            }
+                        )
+                        self.progress(
+                            f"Subgoal {current_subgoal.number} verified; advancing"
+                        )
+                        continue
                 self.progress(
                     f"Step {number}: observing and pursuing subgoal "
                     f"{current_subgoal.number}/{len(result.subgoals)}"
@@ -640,32 +730,52 @@ class GoalAgent:
                 decision_seconds = time.monotonic() - decision_started
                 signature = action_signature(action)
                 if signature in blocked_signatures and action.type != "wait":
-                    # Before changing strategy, check whether the OVERALL goal is
-                    # already satisfied. Fine-grained subgoals (e.g. "select a
-                    # program") may lack a clean completion signal, so the agent can
-                    # actually finish the goal while the subgoal tracker lags and
-                    # then loop. This catches that and stops cleanly.
-                    overall = self.model.verify(
-                        goal,
-                        image,
-                        ui_dump,
-                        knowledge_context=step_context,
-                        reference_images=step_references,
-                    )
-                    if (
-                        str(overall.get("outcome")) == "pass"
-                        and float(overall.get("confidence", 0.0))
-                        >= self.config.minimum_success_confidence
+                    # Cheap check first: if the final subgoal's success cue is
+                    # already on screen (e.g. the goal was reached, or the run
+                    # started mid-flow with "Massage running" already showing),
+                    # finish without paying for a full model verify.
+                    final_cue = subgoal_success_cues.get(len(result.subgoals) - 1)
+                    if final_cue and subgoal_cue_satisfied(
+                        final_cue, extract_visible_text(ui_dump)
                     ):
-                        evidence = str(overall.get("evidence", "Goal already satisfied"))
                         for prior in result.subgoals:
                             if prior.status != "passed":
                                 prior.status = "passed"
-                                prior.evidence = evidence
+                                prior.evidence = f"Observed on screen: {final_cue!r}"
                         result.outcome = "pass"
-                        result.reason = evidence
-                        self.progress("Overall goal already satisfied; finishing")
+                        result.reason = f"Observed on screen: {final_cue!r}"
+                        trace.event(
+                            "verify", scope="success_cue", step=number,
+                            cue=final_cue, outcome="pass",
+                        )
+                        self.progress(f"Goal already satisfied (cue {final_cue!r})")
                         break
+                    # Otherwise fall back to a full model verify (unless
+                    # verification is off): fine-grained subgoals (e.g. "select a
+                    # program") may lack a clean signal, so the agent can finish
+                    # the goal while the tracker lags and loop.
+                    if self.config.uses_model_verify():
+                        overall = self.model.verify(
+                            goal,
+                            image,
+                            ui_dump,
+                            knowledge_context=step_context,
+                            reference_images=step_references,
+                        )
+                        if (
+                            str(overall.get("outcome")) == "pass"
+                            and float(overall.get("confidence", 0.0))
+                            >= self.config.minimum_success_confidence
+                        ):
+                            evidence = str(overall.get("evidence", "Goal already satisfied"))
+                            for prior in result.subgoals:
+                                if prior.status != "passed":
+                                    prior.status = "passed"
+                                    prior.evidence = evidence
+                            result.outcome = "pass"
+                            result.reason = evidence
+                            self.progress("Overall goal already satisfied; finishing")
+                            break
                     history.append(
                         {
                             "blocked_repetition": repr(signature),
@@ -731,6 +841,33 @@ class GoalAgent:
                         if current_subgoal_index == len(result.subgoals) - 1
                         else current_subgoal.description
                     )
+                    if not self.config.uses_model_verify():
+                        # verification off: trust the finish action, complete
+                        # deterministically without a model call.
+                        evidence = "Finish action accepted (verification off)"
+                        current_subgoal.status = "passed"
+                        current_subgoal.evidence = evidence
+                        trace.event(
+                            "verify", scope="finish_action", step=number,
+                            outcome="pass", verification="off",
+                        )
+                        if current_subgoal_index == len(result.subgoals) - 1:
+                            result.outcome = "pass"
+                            result.reason = evidence
+                            break
+                        current_subgoal_index += 1
+                        result.subgoals[current_subgoal_index].status = "running"
+                        history.append(
+                            {
+                                "completed_subgoal": current_subgoal.description,
+                                "evidence": evidence,
+                                "next_subgoal": result.subgoals[current_subgoal_index].description,
+                            }
+                        )
+                        self.progress(
+                            f"Subgoal {current_subgoal.number} accepted (verification off); advancing"
+                        )
+                        continue
                     verification = self.model.verify(
                         verification_goal,
                         image,
@@ -795,20 +932,62 @@ class GoalAgent:
                     break
 
                 before = screen_hash
-                self.device.execute(action, size)
+                try:
+                    self.device.execute(action, size)
+                except AdbError as exc:
+                    # A single un-executable action (e.g. open_app on a screen
+                    # name that isn't a package) is recoverable, not fatal: record
+                    # it, tell the model why, block the repeat, and replan next
+                    # step instead of aborting the whole run.
+                    step.error = str(exc)
+                    step.screen_changed = False
+                    remember_failed_action(failed_action_memory, screen_hash, signature)
+                    trace.event(
+                        "execute_error",
+                        step=number,
+                        action=action.type,
+                        target=action.target or action.app_name,
+                        error=str(exc),
+                    )
+                    history.append(
+                        {
+                            "failed_action": action.type,
+                            "target": action.target or action.app_name,
+                            "error": str(exc),
+                            "instruction": (
+                                "That action could not be executed. This IVI is a single "
+                                "app under test — reach other screens by tapping on-screen "
+                                "controls or going back/home, not by launching another app."
+                            ),
+                        }
+                    )
+                    self.progress(
+                        f"Step {number}: action failed ({exc}); replanning"
+                    )
+                    carried_observation = None
+                    continue
+                _phase = time.monotonic()
                 self.device.wait_until_stable(
                     directory,
                     self.config.settle_timeout_seconds,
                     getattr(self.config, "settle_poll_seconds", 0.2),
                 )
+                _add_phase("settle", _phase)
                 check_path = directory / f"step-{number:02d}-after.png"
+                _phase = time.monotonic()
                 after_image = self.device.capture(check_path)
+                _add_phase("capture", _phase)
                 after = perceptual_hash(after_image)
+                _phase = time.monotonic()
                 try:
                     after_ui = self.device.ui_dump()
                 except Exception:
                     after_ui = ""
+                _add_phase("ui_dump", _phase)
                 step.screen_changed = screen_made_progress(before, after, ui_dump, after_ui)
+                # This post-action screen is the next step's start observation;
+                # carry it forward to skip a duplicate capture + uiautomator dump.
+                carried_observation = (after_image, after_ui, after)
                 trace.event(
                     "execute",
                     step=number,
@@ -838,32 +1017,46 @@ class GoalAgent:
                 # is now visible (e.g. a program becoming "Selected"), so the agent
                 # moves on instead of re-tapping the same control.
                 advanced_by_cue = False
-                if current_subgoal_index < len(result.subgoals) - 1:
-                    cue = subgoal_success_cues.get(current_subgoal_index)
-                    if cue and subgoal_cue_satisfied(cue, extract_visible_text(after_ui)):
-                        current_subgoal.status = "passed"
-                        current_subgoal.evidence = f"Observed on screen: {cue!r}"
-                        history.append(
-                            {
-                                "completed_subgoal": current_subgoal.description,
-                                "evidence": current_subgoal.evidence,
-                                "next_subgoal": result.subgoals[current_subgoal_index + 1].description,
-                            }
-                        )
-                        current_subgoal_index += 1
-                        result.subgoals[current_subgoal_index].status = "running"
-                        trace.event(
-                            "subgoal_advanced",
-                            step=number,
-                            via="success_cue",
-                            cue=cue,
-                            next=result.subgoals[current_subgoal_index].description,
-                        )
-                        self.progress(
-                            f"Subgoal advanced via observed cue {cue!r}; "
-                            f"now pursuing {result.subgoals[current_subgoal_index].description!r}"
-                        )
-                        advanced_by_cue = True
+                cue = subgoal_success_cues.get(current_subgoal_index)
+                cue_seen = bool(cue) and subgoal_cue_satisfied(
+                    cue, extract_visible_text(after_ui)
+                )
+                if cue_seen and current_subgoal_index < len(result.subgoals) - 1:
+                    current_subgoal.status = "passed"
+                    current_subgoal.evidence = f"Observed on screen: {cue!r}"
+                    history.append(
+                        {
+                            "completed_subgoal": current_subgoal.description,
+                            "evidence": current_subgoal.evidence,
+                            "next_subgoal": result.subgoals[current_subgoal_index + 1].description,
+                        }
+                    )
+                    current_subgoal_index += 1
+                    result.subgoals[current_subgoal_index].status = "running"
+                    trace.event(
+                        "subgoal_advanced",
+                        step=number,
+                        via="success_cue",
+                        cue=cue,
+                        next=result.subgoals[current_subgoal_index].description,
+                    )
+                    self.progress(
+                        f"Subgoal advanced via observed cue {cue!r}; "
+                        f"now pursuing {result.subgoals[current_subgoal_index].description!r}"
+                    )
+                    advanced_by_cue = True
+                elif cue_seen:
+                    # Final subgoal: its success cue completes the whole goal. This
+                    # is the deterministic completion path when verify_each_step is
+                    # off, and it stops the agent before it toggles the state back
+                    # (e.g. tapping Stop after the massage is already running).
+                    current_subgoal.status = "passed"
+                    current_subgoal.evidence = f"Observed on screen: {cue!r}"
+                    result.outcome = "pass"
+                    result.reason = current_subgoal.evidence
+                    trace.event("verify", scope="success_cue", step=number, cue=cue, outcome="pass")
+                    self.progress(f"Goal reached via observed cue {cue!r}")
+                    break
                 if not step.screen_changed and not advanced_by_cue:
                     remember_failed_action(
                         failed_action_memory, screen_hash, signature
@@ -909,6 +1102,9 @@ class GoalAgent:
                 # the model/CV part. The gap is capture + settle + verify overhead.
                 "total_wall_seconds": round(wall_total, 3),
                 "wall_seconds_per_step": round(wall_total / steps_done, 3) if steps_done else 0.0,
+                # Per-phase wall breakdown (same dict object mutated below for
+                # teardown phases like logcat), so a slow run is self-diagnosing.
+                "phase_seconds": phase_seconds,
             }
             if scene_graph is not None:
                 pending = scene_graph.pending_findings()
@@ -935,6 +1131,49 @@ class GoalAgent:
                         f"{len(pending)} HMI divergence(s) need review "
                         "(candidate defects) — see result.json / scene_graph.json"
                     )
+            # Crash / ANR capture: scan logcat once at the end (cleared at start),
+            # write logcat.txt for debugging, and surface any fatal events.
+            if getattr(self.config, "capture_logs", True):
+                try:
+                    _phase = time.monotonic()
+                    logcat_text = self.device.logcat_dump(
+                        getattr(self.config, "log_tail_lines", 4000)
+                    )
+                    _add_phase("logcat_dump", _phase)
+                    if logcat_text:
+                        try:
+                            (directory / "logcat.txt").write_text(
+                                logcat_text, encoding="utf-8"
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
+                        events = scan_crashes(
+                            logcat_text, self.config.target_package or None
+                        )
+                        result.crashes = crash_summary(events)
+                        for event in events:
+                            trace.event(
+                                "crash",
+                                crash_kind=event.kind,
+                                package=event.package,
+                                summary=event.summary,
+                                logcat_line=event.line,
+                            )
+                        if events:
+                            self.progress(
+                                f"⚠ {len(events)} fatal log event(s) detected "
+                                f"(see logcat.txt): "
+                                + "; ".join(f"{e.kind}:{e.package}" for e in events[:3])
+                            )
+                            if getattr(self.config, "fail_on_crash", True):
+                                result.outcome = "fail"
+                                first = events[0]
+                                result.reason = (
+                                    f"Crash detected during run: {first.kind} "
+                                    f"{first.package} — {first.summary}"
+                                )
+                except Exception:  # noqa: BLE001 - log capture is advisory
+                    pass
             trace.event(
                 "done",
                 outcome=result.outcome,
@@ -943,4 +1182,9 @@ class GoalAgent:
             )
             trace.close()
             write_report(result)
+            # Interactive, shareable step-by-step replay (best-effort).
+            try:
+                build_replay(Path(result.run_directory))
+            except Exception:  # noqa: BLE001 - replay is a convenience, never fatal
+                pass
         return result

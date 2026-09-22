@@ -1,5 +1,7 @@
 # IVI Visual Agent
 
+[![tests](https://github.com/VPathy16/ivi-visual-agent/actions/workflows/tests.yml/badge.svg)](https://github.com/VPathy16/ivi-visual-agent/actions/workflows/tests.yml)
+
 A fully local, goal-driven visual agent for standard Android phones, Android Automotive,
 and Android IVI testing.
 Give it an outcome such as `Open the Bluetooth settings screen`; it observes the current
@@ -828,14 +830,32 @@ Each run creates a timestamped directory under `runs/` containing:
   `verify`, `incident`, `done`) — the backbone for replay and diagnostics.
 - `agent.log`: the same events as timestamped text.
 - `task.json` / `plan.json`: the goal + config snapshot and the planned subgoals.
+- `logcat.txt`: logcat captured during the run (cleared at start). Fatal events
+  (Java crash, ANR, native signal, process death) are scanned out and listed in
+  `result.json` (`crashes`) and the report; `fail_on_crash` (default on) fails the
+  run when one is found, and `target_package` attributes/filters them.
 
 The trace layer (`trace: true`, default on) is best-effort — a tracing failure
 never aborts a run. The event schema is open, so future signal sources (VHAL/CAN
 vehicle state, system logs) append as their own event kinds — see the design for
 operator-declared state probes, CCF divergence checks, recovery hooks, and MCP:
-[docs/probes-commands-and-mcp.md](docs/probes-commands-and-mcp.md).
+[docs/future-upgrades/probes-commands-and-mcp.md](docs/future-upgrades/probes-commands-and-mcp.md).
+The full backlog of planned upgrades lives in
+[docs/future-upgrades/](docs/future-upgrades/README.md), and the technical study
+of what a *true* Android IVI validation agent requires is in
+[docs/research/android-ivi-validation-agent.md](docs/research/android-ivi-validation-agent.md).
 
 The `runs/` directory is intentionally ignored by Git because it can grow quickly.
+
+## VisionLaya (experimental subproject)
+
+[VisionLaya](docs/visionlaya.md) is the plan to replace the slow vision-language
+model, for common learned cases, with a small **non-autoregressive** image→decision
+model (~30ms, calibrated) that falls back to the VLM only on novel screens. The
+agent generates its own training data: `visionlaya export --runs runs --out
+data.jsonl` turns your runs (plus approved paths) into a labeled set — GPU-free —
+and a head-only trainer (frozen backbone + small head) runs on a 16GB Apple-Silicon
+Mac. See [docs/visionlaya.md](docs/visionlaya.md).
 
 ## Current limitations
 

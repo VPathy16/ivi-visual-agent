@@ -11,12 +11,48 @@ from pathlib import Path
 
 from .adb import AdbDevice
 from .agent import GoalAgent
-from .config import Config
+from .config import Config, PROFILES, VERIFICATION_LEVELS
 from .model import OllamaVisionModel
 from .suite import load_suite_cases, run_suite
 
 
-def doctor(config: Config) -> int:
+def _promote_finding(graph_obj, finding, knowledge_root: Path, profile: str) -> list[str]:
+    """Write an approved scene-graph discovery into the manual so the agent
+    remembers it. Returns human-readable notes on what was documented.
+
+    Best-effort: a knowledge profile that can't be opened just yields no update
+    (the approval itself already stuck in the scene graph).
+    """
+    from .graph import SceneGraph  # local import: CLI already imports lazily
+    from .knowledge import KnowledgeBase, KnowledgeError
+
+    try:
+        kb = KnowledgeBase.open(knowledge_root, profile)
+    except (KnowledgeError, OSError):
+        return []
+    notes: list[str] = []
+    if finding.kind == "undocumented_transition" and finding.src and finding.dst:
+        edge = graph_obj.edges.get((finding.src, finding.dst))
+        via = edge.via_control if edge and edge.via_control else (edge.via_action if edge else "")
+        dst_name = graph_obj.nodes[finding.dst].name if finding.dst in graph_obj.nodes else finding.dst
+        if kb.document_transition(finding.src, finding.dst, dst_name, via):
+            notes.append(
+                f"documented transition {finding.src} -> {finding.dst}"
+                + (f" via {via!r}" if via else "")
+            )
+    elif finding.kind == "undocumented_screen" and finding.node_id in graph_obj.nodes:
+        node = graph_obj.nodes[finding.node_id]
+        if kb.document_screen(node.id, node.name, list(node.tokens)):
+            notes.append(f"documented screen {node.id!r} ({node.name!r})")
+    return notes
+
+
+def run_doctor_checks(config: Config) -> list[tuple[str, bool, str]]:
+    """Return preflight checks as (name, passed, detail) — no printing.
+
+    Shared by the `doctor` CLI command and the MCP server so both report the
+    same local-dependency and model-availability state.
+    """
     checks: list[tuple[str, bool, str]] = []
     for executable in ("adb", "scrcpy", "ollama", "tesseract"):
         location = shutil.which(executable)
@@ -29,7 +65,11 @@ def doctor(config: Config) -> int:
         checks.append((f"model {config.model}", available, "available" if available else "not pulled"))
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
         checks.append(("Ollama API", False, str(exc)))
+    return checks
 
+
+def doctor(config: Config) -> int:
+    checks = run_doctor_checks(config)
     width = max(len(name) for name, _, _ in checks)
     for name, passed, detail in checks:
         print(f"{'OK' if passed else 'MISSING':7} {name:<{width}}  {detail}")
@@ -63,6 +103,19 @@ def parser() -> argparse.ArgumentParser:
     run.add_argument("--dry-run", action="store_true", help="Plan one action without executing it")
     run.add_argument("--knowledge-profile", help="Local manual knowledge profile")
     run.add_argument("--knowledge-root", help="Directory containing knowledge profiles")
+    run.add_argument(
+        "--profile",
+        dest="exec_profile",
+        choices=sorted(PROFILES),
+        help="Execution profile: fast (minimum overhead) | balanced (default) | "
+        "strict (verify every step). config.json / other flags override it.",
+    )
+    run.add_argument(
+        "--verification-level",
+        choices=list(VERIFICATION_LEVELS),
+        help="How hard to prove success: off | final | checkpoints | strict. "
+        "Overrides config and profile.",
+    )
 
     suite = commands.add_parser("suite", help="Run independent goals from Home")
     suite.add_argument("--cases", required=True, help="Path to suite case JSON")
@@ -73,10 +126,26 @@ def parser() -> argparse.ArgumentParser:
     )
     suite.add_argument("--knowledge-profile", help="Local manual knowledge profile")
     suite.add_argument("--knowledge-root", help="Directory containing knowledge profiles")
+    suite.add_argument(
+        "--profile",
+        dest="exec_profile",
+        choices=sorted(PROFILES),
+        help="Execution profile: fast | balanced | strict (see `run --help`).",
+    )
+    suite.add_argument(
+        "--verification-level",
+        choices=list(VERIFICATION_LEVELS),
+        help="How hard to prove success: off | final | checkpoints | strict.",
+    )
 
     mirror = commands.add_parser("scrcpy", help="Open a live scrcpy view")
     mirror.add_argument("--serial", help="ADB device serial")
     mirror.add_argument("--record", help="Optional MP4 recording path")
+
+    replay = commands.add_parser(
+        "replay", help="Build an interactive replay.html for a finished run"
+    )
+    replay.add_argument("--run", required=True, help="Path to a run directory")
 
     manual = commands.add_parser("manual", help="Build a RAG-friendly PDF manual")
     manual_commands = manual.add_subparsers(dest="manual_command", required=True)
@@ -133,8 +202,18 @@ def parser() -> argparse.ArgumentParser:
     graph_review.add_argument("--profile", required=True, help="Profile name")
     graph_review.add_argument("--root", default="knowledge", help="Knowledge profile root")
     graph_review.add_argument("--finding", required=True, help="Finding id, e.g. F0001")
-    graph_review.add_argument(
-        "--decision", required=True, choices=["approve", "defect"]
+    decision = graph_review.add_mutually_exclusive_group(required=True)
+    decision.add_argument(
+        "--decision", choices=["approve", "defect"], dest="decision",
+        help="approve (legit path — learned into the manual) or defect",
+    )
+    decision.add_argument(
+        "--approve", action="store_const", const="approve", dest="decision",
+        help="shortcut for --decision approve",
+    )
+    decision.add_argument(
+        "--defect", action="store_const", const="defect", dest="decision",
+        help="shortcut for --decision defect",
     )
     return root
 
@@ -220,9 +299,34 @@ def main() -> None:
             if args.graph_command == "review":
                 finding = graph_obj.review(args.finding, args.decision)
                 graph_obj.save(graph_path)
-                print(json.dumps({"finding": finding.id, "status": finding.status, "node": finding.node_id}, indent=2))
+                # Approving a discovery promotes it into the manual, so the agent
+                # remembers the path and future runs use it without the model.
+                manual_updated: list[str] = []
+                if finding.status == "approved":
+                    manual_updated = _promote_finding(graph_obj, finding, Path(args.root), args.profile)
+                print(json.dumps({
+                    "finding": finding.id,
+                    "status": finding.status,
+                    "node": finding.node_id,
+                    "manual_updated": manual_updated,
+                }, indent=2))
                 raise SystemExit(0)
+        if args.command == "replay":
+            from .replay import build_replay
+
+            run_dir = Path(args.run)
+            if not run_dir.is_dir():
+                print(f"no such run directory: {run_dir}", file=sys.stderr)
+                raise SystemExit(1)
+            out = build_replay(run_dir)
+            print(json.dumps({"replay": str(out)}, indent=2))
+            raise SystemExit(0)
         config = Config.load(args.config)
+        config.apply_profile(getattr(args, "exec_profile", None))
+        # An explicit --verification-level wins over config and profile.
+        cli_level = getattr(args, "verification_level", None)
+        if cli_level:
+            config.verification_level = cli_level
         if args.command == "doctor":
             raise SystemExit(doctor(config))
         if args.command == "scrcpy":

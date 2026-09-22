@@ -230,6 +230,28 @@ class OllamaVisionModel:
         # the strict default preserves the original goal-driven guardrails.
         self.lenient = lenient
 
+    def warmup(self) -> bool:
+        """Best-effort: ask Ollama to load the model into memory now.
+
+        A run's first vision call otherwise pays a multi-second cold load. Firing
+        this at run startup (in a background thread) lets the model load *while*
+        the first screenshot + uiautomator dump happen, so the first real
+        decision is warm. Returns True if the warmup request succeeded; failures
+        are swallowed because a cold first call still works.
+        """
+        payload = {"model": self.model, "keep_alive": "10m"}
+        request = urllib.request.Request(
+            f"{self.base_url}/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                response.read()
+            return True
+        except Exception:  # noqa: BLE001 - warmup is advisory, never fatal
+            return False
+
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any]:
         text = text.strip()
@@ -453,6 +475,13 @@ class OllamaVisionModel:
         if target_tokens & goal_tokens:
             return True
         reason_tokens = tokens(action.reason)
+        # An icon/symbol tile (e.g. "~M~") yields no lexical word to overlap a
+        # worded goal, so it could never pass the target/goal token test however
+        # correct the tap is. When the target has no real word, judge it by
+        # whether the model's stated reason ties the action to the goal
+        # ("...the Seat Comfort tile to open the massage screen").
+        if not {token for token in target_tokens if len(token) >= 2}:
+            return bool(goal_tokens & reason_tokens)
         return bool(target_tokens & reason_tokens) and bool(goal_tokens & reason_tokens)
 
     @staticmethod

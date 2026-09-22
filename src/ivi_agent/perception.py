@@ -305,6 +305,59 @@ def extract_screen_titles(ui_dump: str, limit: int = 4) -> list[str]:
     return titles
 
 
+def extract_tree_headings(ui_dump: str, limit: int = 4) -> list[str]:
+    """Infer the screen heading from the accessibility tree by prominence.
+
+    Many screens (WebView / Flutter / custom-drawn IVI UIs) expose their text in
+    the uiautomator tree but never tag a node with a title resource-id, so
+    ``extract_screen_titles`` finds nothing. Rather than fall back to a slow OCR
+    pass — the tree already holds the text — pick the prominent heading the same
+    way the OCR heuristic does: comparatively tall text in the upper band of the
+    screen, above the content but below the status bar. This keeps title matching
+    working on those screens for free.
+    """
+    if not ui_dump.strip():
+        return []
+    try:
+        root = ET.fromstring(ui_dump)
+    except ET.ParseError:
+        return []
+    parsed: list[tuple[str, tuple[int, int, int, int]]] = []
+    # Screen height comes from ALL nodes (the full-screen root container), not
+    # just text nodes — otherwise a screen with a single heading measures its
+    # position against its own height and is wrongly filtered out.
+    screen_bottom = 0
+    for node in root.iter("node"):
+        bounds = parse_bounds(node.attrib.get("bounds", ""))
+        if not bounds:
+            continue
+        screen_bottom = max(screen_bottom, bounds[3])
+        text = " ".join(node.attrib.get("text", "").split())
+        if not text:
+            text = " ".join(node.attrib.get("content-desc", "").split())
+        if text:
+            parsed.append((text, bounds))
+    if not parsed:
+        return []
+    screen_height = screen_bottom or 1
+    candidates = [
+        (text, bounds)
+        for text, bounds in parsed
+        # Upper band (skip the status bar at the very top and the body below),
+        # and tall enough to read as a heading rather than a row of body text.
+        if 0.06 <= ((bounds[1] + bounds[3]) / 2) / screen_height <= 0.30
+        and (bounds[3] - bounds[1]) >= screen_height * 0.024
+    ]
+    candidates.sort(key=lambda item: (item[1][1], item[1][0]))
+    titles: list[str] = []
+    for text, _ in candidates:
+        if text not in titles:
+            titles.append(text)
+        if len(titles) >= limit:
+            break
+    return titles
+
+
 def extract_ocr_screen_titles(image: bytes, limit: int = 4) -> list[str]:
     """Infer prominent upper-screen headings when accessibility omits them.
 

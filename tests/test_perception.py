@@ -8,6 +8,7 @@ from ivi_agent.perception import (
     UIElement,
     extract_screen_titles,
     extract_ocr_screen_titles,
+    extract_tree_headings,
     extract_ui_elements,
     extract_visible_text,
     hash_distance,
@@ -110,6 +111,29 @@ class PerceptionTests(unittest.TestCase):
         ]
         with patch("ivi_agent.perception.extract_ocr_elements", return_value=elements):
             self.assertEqual(extract_ocr_screen_titles(source.getvalue()), ["Pair new device"])
+
+    def test_tree_heading_reads_webview_title_without_resource_id(self) -> None:
+        # A WebView / custom IVI screen: the heading is prominent text near the
+        # top but carries no title resource-id, so extract_screen_titles finds
+        # nothing and the tree fallback must recover it (avoiding slow OCR).
+        source = """<hierarchy><node bounds='[0,0][1080,2400]'>
+          <node text='12:45' bounds='[20,0][120,60]' />
+          <node text='Seat massage' class='android.webkit.WebView'
+                bounds='[40,240][700,320]' />
+          <node text='Start' bounds='[40,900][300,980]' />
+        </node></hierarchy>"""
+        self.assertEqual(extract_screen_titles(source), [])
+        self.assertEqual(extract_tree_headings(source), ["Seat massage"])
+
+    def test_tree_heading_skips_status_bar_and_body(self) -> None:
+        source = """<hierarchy><node bounds='[0,0][1080,2400]'>
+          <node text='12:45' bounds='[20,0][120,50]' />
+          <node text='A body row far down the screen' bounds='[40,1600][900,1660]' />
+        </node></hierarchy>"""
+        self.assertEqual(extract_tree_headings(source), [])
+
+    def test_tree_heading_empty_dump(self) -> None:
+        self.assertEqual(extract_tree_headings(""), [])
 
     def test_extracts_visible_text_without_requiring_clickability(self) -> None:
         source = """<hierarchy><node bounds='[0,0][100,100]'>

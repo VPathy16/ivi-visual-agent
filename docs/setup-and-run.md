@@ -196,9 +196,55 @@ Network head unit: `adb connect <IP>:5555`.
 ```bash
 ivi-agent graph show --profile benz                # coverage + pending findings
 ```
+
+When the agent reaches a screen or takes a path the manual doesn't describe, it
+finishes the task (using the model that once) and flags the path for review
+instead of failing. You decide whether it's a real path or a defect:
+
+```bash
+ivi-agent graph review --profile benz --finding F0001 --approve   # legit path
+ivi-agent graph review --profile benz --finding F0001 --defect    # a bug
+```
+
+**Approving writes the path into the manual** (a new screen page, or the control
+that reaches it). The manual becomes the agent's memory: the next run reads that
+page, so the a11y fast-path and retrieval handle the hop with **no model call**.
+Marking it a defect leaves it flagged and does *not* teach it. So the model is
+needed to discover a path once; after you approve it, that path is free forever.
+
 The newest `runs/<timestamp>/` holds `result.json` (outcome, grounding, scene
-graph), `report.html`, `events.jsonl`, `agent.log`, and step screenshots. macOS
-`open <file>`, Linux `xdg-open <file>`, Windows `start <file>`.
+graph), `report.html`, `replay.html`, `events.jsonl`, `agent.log`, and step
+screenshots. macOS `open <file>`, Linux `xdg-open <file>`, Windows `start <file>`.
+
+`replay.html` is an interactive, self-contained step-by-step console (screens,
+actions, grounding, reasoning stream, phase timing, scene-graph coverage,
+crashes) written automatically at the end of every run — one file you can open
+offline or send to someone. Rebuild it for any past run with:
+
+```bash
+ivi-agent replay --run runs/<timestamp>
+```
+
+Speed vs rigour is one flag: `ivi-agent run --profile fast` (minimum overhead) /
+`balanced` (default) / `strict` (verify every step). It overrides `config.json`
+for the keys it owns.
+
+How hard the agent *proves* success is a second knob, `--verification-level`
+(or `verification_level` in config.json):
+`off` (trust cheap title/cue signals) / `final` (model confirms the overall goal
+once) / `checkpoints` (default — model verifies each step of the final subgoal) /
+`strict` (model verifies every step of every subgoal). `--profile fast` implies
+`final`, `--profile strict` implies `strict`; an explicit `--verification-level`
+wins over both.
+
+For trustworthy results, set `"target_package"` and `"relaunch_before_run": true`
+in `config.json`: the run force-stops and relaunches the app cold before each
+validation, so a "pass" reflects the flow actually happening — not state a
+previous run left behind. Off by default.
+
+To drive validations from an MCP client (Claude Code, Antigravity, Cursor),
+install the server with `pip install -e '.[mcp]'` and run `ivi-agent-mcp`. See
+[docs/mcp-server.md](mcp-server.md) for the tools and client config.
 
 ## Notes that bite on every OS
 

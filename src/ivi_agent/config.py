@@ -5,6 +5,44 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
+# Named execution profiles, ARTEMIS-style: a small, coherent bundle of speed vs
+# rigour knobs picked with one flag. Only the keys listed here are touched. A
+# profile passed on the CLI is a deliberate "run it this way now" intent, so it
+# overrides the persistent config.json for these keys (precedence: library
+# defaults < config.json < --profile). The untouched grounding ladder
+# (a11y -> cv -> model) stays on for every profile.
+#   fast     -> minimum overhead: no per-step model verify, no OCR fallback,
+#               short settle. The a11y/cv fast paths carry the run.
+#   balanced -> library defaults (nothing overridden).
+#   strict   -> maximum evidence: verify every step, OCR fallback on, longer
+#               settle for animation-heavy screens, higher success bar.
+# How hard the agent works to *prove* a goal was reached, trading speed for
+# confidence (ARTEMIS-style off/final/checkpoints/strict):
+#   off         -> never call the vision model to verify; trust cheap signals
+#                  (screen title match, manual success_text cues). Fastest.
+#   final       -> cheap signals drive the run; the model confirms only the
+#                  OVERALL goal (finish / already-satisfied). One check.
+#   checkpoints -> final + the model verifies each step while pursuing the final
+#                  subgoal (catches the goal flipping mid-step). (Default.)
+#   strict      -> the model verifies every step of every subgoal, so each
+#                  milestone is independently proven. Slowest, most defensible.
+VERIFICATION_LEVELS = ("off", "final", "checkpoints", "strict")
+
+PROFILES: dict[str, dict[str, Any]] = {
+    "fast": {
+        "verification_level": "final",
+        "enable_ocr": False,
+        "settle_timeout_seconds": 1.0,
+    },
+    "balanced": {},
+    "strict": {
+        "verification_level": "strict",
+        "enable_ocr": True,
+        "settle_timeout_seconds": 3.0,
+        "minimum_success_confidence": 0.9,
+    },
+}
+
 
 @dataclass
 class Config:
@@ -19,6 +57,10 @@ class Config:
     # faster; raise it for animation-heavy IVIs. See settle_poll_seconds.
     settle_timeout_seconds: float = 2.0
     settle_poll_seconds: float = 0.2
+    # Reuse the post-action screen as the next step's start observation, avoiding
+    # a duplicate screenshot + uiautomator dump per step. Set false to force a
+    # fresh capture each step.
+    reuse_after_state: bool = True
     prefer_ui_tree: bool = True
     enable_ocr: bool = True
     max_image_dimension: int = 768
@@ -34,10 +76,14 @@ class Config:
     # Ollama context window (num_ctx). A screenshot + UI candidates + history can
     # exceed Ollama's 4096 default, causing HTTP 400 exceed_context_size errors.
     model_context_tokens: int = 8192
-    # If True, the AndroidWorld adapter verifies completion before planning on each
-    # step of the final subgoal. This ends state-change tasks as soon as the state
-    # flips (fewer steps overall), and prevents the agent from re-toggling a control
-    # it already set. Default True; set False only for pure navigation runs.
+    # How hard the agent proves success: off | final | checkpoints | strict
+    # (see VERIFICATION_LEVELS). Default "checkpoints" keeps the historical
+    # behaviour (model-verify each step of the final subgoal). Set via
+    # config.json or --profile (fast->final, strict->strict).
+    verification_level: str = "checkpoints"
+    # Legacy alias, superseded by verification_level and no longer read by the
+    # agent. Kept so older config.json files still load; the AndroidWorld adapter
+    # still honours it for its own loop.
     verify_each_step: bool = True
     allow_text_input: bool = True
     protected_regions: list[list[float]] | None = None
@@ -85,6 +131,22 @@ class Config:
     # into the run directory — the backbone for replay, diagnostics, and an
     # engineer report. Best-effort; never aborts a run.
     trace: bool = True
+    # Crash/ANR capture. When enabled, the run clears logcat at start, scans it
+    # after each action and at the end for fatal events (Java crash, ANR, native
+    # signal, process death), writes logcat.txt into the run directory, and lists
+    # any crashes in result.json / the report. target_package (e.g. the app under
+    # test) attributes and filters events; empty = report all fatal events.
+    # fail_on_crash marks the run failed if a crash is detected.
+    capture_logs: bool = True
+    target_package: str = ""
+    fail_on_crash: bool = True
+    log_tail_lines: int = 4000
+    # Clean-start test hygiene. When enabled (and target_package is set), the run
+    # force-stops and relaunches the app before starting, so every validation
+    # begins from a known cold state instead of whatever a previous run left
+    # behind. Off by default so it never surprises an existing setup; turn it on
+    # for trustworthy regression results. No-op without target_package.
+    relaunch_before_run: bool = False
     # Living scene graph. When a knowledge profile is active, seed an expected
     # screen graph from the manual, then confirm nodes/edges as the agent reaches
     # screens and flag screens/transitions that diverge from the manual as
@@ -95,6 +157,28 @@ class Config:
     def __post_init__(self) -> None:
         if self.protected_regions is None:
             self.protected_regions = []
+        if self.verification_level not in VERIFICATION_LEVELS:
+            raise ValueError(
+                f"Unknown verification_level: {self.verification_level!r}. "
+                f"Choose from {', '.join(VERIFICATION_LEVELS)}."
+            )
+
+    def uses_model_verify(self) -> bool:
+        """Whether the vision model is used to verify success at all."""
+        return self.verification_level != "off"
+
+    def verify_step(self, is_final_subgoal: bool) -> bool:
+        """Whether to model-verify the current step, given the subgoal it pursues.
+
+        strict verifies every step; checkpoints verifies only while on the final
+        subgoal; final/off never verify per step (they rely on cheap signals and,
+        for final, a single overall/finish check).
+        """
+        if self.verification_level == "strict":
+            return True
+        if self.verification_level == "checkpoints":
+            return is_final_subgoal
+        return False
 
     @classmethod
     def load(cls, path: str | None) -> "Config":
@@ -106,3 +190,19 @@ class Config:
         if unknown:
             raise ValueError(f"Unknown configuration keys: {', '.join(unknown)}")
         return cls(**data)
+
+    def apply_profile(self, name: str | None) -> "Config":
+        """Apply a named execution profile in place; return self for chaining.
+
+        A profile is a deliberate CLI intent, so it overrides config.json for the
+        keys it owns (see PROFILES). ``None`` is a no-op; an unknown name raises.
+        """
+        if not name:
+            return self
+        if name not in PROFILES:
+            raise ValueError(
+                f"Unknown profile: {name!r}. Choose from {', '.join(sorted(PROFILES))}."
+            )
+        for key, value in PROFILES[name].items():
+            setattr(self, key, value)
+        return self
