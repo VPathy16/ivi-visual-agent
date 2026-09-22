@@ -42,6 +42,28 @@ grid when a custom IVI surface exposes only pixels.
   recognition reference for proprietary controls — see
   [Semantic retrieval](#semantic-retrieval-optional).
 
+- ⚡ **Fast, self-diagnosing runs.** A grounding ladder — **accessibility tree →
+  OpenCV → vision model** — resolves most steps on the tree in well under a
+  millisecond with no model call; a full Climate→Seat-Massage flow has run with
+  **zero model calls**. Model warmup, single-call UI dumps, and a read-the-title-
+  from-the-tree path keep wall time low, and every run emits a per-phase timing
+  breakdown. Speed vs rigour is one flag (`--profile fast|balanced|strict`), and
+  how hard it *proves* success is another (`--verification-level
+  off|final|checkpoints|strict`).
+
+- 🧭 **Self-improving from its own runs.** The living scene graph flags any screen
+  or transition the manual doesn't document as a candidate defect; **approving it
+  writes a new manual page**, so the agent remembers that path and future runs
+  take it with no model call. Mark it a defect and nothing is learned — the human
+  is the gate, so it never memorises a bug. See
+  [Living scene graph](#living-scene-graph-hmi-vs-manual--defect-detection).
+
+- 🔌 **Built for a real workflow.** An interactive per-run **replay console**
+  (`replay.html`), an **MCP server** (`ivi-agent-mcp`) to drive validations from
+  Claude Code / Antigravity / Cursor ([docs](docs/mcp-server.md)), crash/ANR
+  capture, optional cold **clean-start**, and **CI** on every push. Recover-and-
+  replan on a bad action instead of aborting the run.
+
 ## Tested emulator screens
 
 These are direct screenshots from the Android 15 Automotive ARM64 emulator used during
@@ -580,6 +602,33 @@ rejects low-confidence actions, malformed coordinates, semantically unrelated ta
 state-changing taps for navigation goals, repeated no-progress actions, unrequested
 permission changes, and destructive or external actions proposed by the model.
 
+## Speed, verification, and integrations
+
+**Execution profiles** bundle the speed-vs-rigour knobs into one flag:
+
+```bash
+ivi-agent run --goal "..." --profile fast      # minimum overhead
+ivi-agent run --goal "..." --profile balanced  # default
+ivi-agent run --goal "..." --profile strict    # verify every step
+```
+
+**Verification levels** set how hard the agent *proves* success — `off` (trust
+cheap title/cue signals), `final` (model confirms the overall goal once),
+`checkpoints` (default; model verifies each step of the final subgoal), `strict`
+(model verifies every step). Set with `--verification-level` or in config; an
+explicit flag wins over the profile.
+
+**Clean-start** — with `"relaunch_before_run": true` and `"target_package"` set,
+the app is force-stopped and relaunched cold before each run, so a "pass"
+reflects the flow rather than state a previous run left behind.
+
+**MCP server** — `pip install -e '.[mcp]'`, then `ivi-agent-mcp` exposes the agent
+to Claude Code / Antigravity / Cursor (`ivi_run_validation`, `ivi_device_state`,
+`ivi_inspect_trace`, `ivi_scene_graph`, `ivi_list_runs`, `ivi_doctor`). See
+[docs/mcp-server.md](docs/mcp-server.md).
+
+Full OS-by-OS setup and run recipes: [docs/setup-and-run.md](docs/setup-and-run.md).
+
 ## Living scene graph (HMI vs. manual — defect detection)
 
 With a knowledge profile active, the agent maintains a **living scene graph** of
@@ -606,10 +655,19 @@ ivi-agent graph build --profile benz
 # After runs: see coverage and anything awaiting review
 ivi-agent graph show --profile benz
 
-# Triage a divergence: legitimate (fold into the model) or a real defect
-ivi-agent graph review --profile benz --finding F0001 --decision approve
-ivi-agent graph review --profile benz --finding F0001 --decision defect
+# Triage a divergence: legitimate path (learned into the manual) or a real defect
+ivi-agent graph review --profile benz --finding F0001 --approve
+ivi-agent graph review --profile benz --finding F0001 --defect
 ```
+
+**Approving learns the path into the manual (agent memory).** When you approve a
+finding, the agent writes it into the knowledge profile — a new screen page, or
+the control that reaches it — so the next run reads it and the a11y fast-path /
+retrieval handle that hop **with no model call**, and the graph stops re-flagging
+it. Marking it a **defect** learns nothing and keeps it flagged. So the model
+discovers a novel path once; after you approve it, that path is free forever, and
+the human decides what becomes canon (the agent never memorises a bug).
+(`--approve` / `--defect` are shortcuts for `--decision approve|defect`.)
 
 Matching uses screen-title tokens first and a perceptual-hash fallback only for
 title-less screens, so a titled screen that matches nothing is treated as new
@@ -825,6 +883,11 @@ Each run creates a timestamped directory under `runs/` containing:
   otherwise), and a `grounding` summary counts CV vs. model steps and total
   decision time — so you can see how much the fast-path saved.
 - `report.html`: a human-readable test report (with a **Grounded by** column)
+- `replay.html`: a **self-contained interactive replay console** — a step
+  scrubber with before/after screens, the grounding badge (a11y / CV / model),
+  the per-step reasoning event stream, a per-phase wall-timing bar, subgoals,
+  scene-graph coverage, and crashes. One file you can open offline or send to
+  someone. Rebuild for any past run: `ivi-agent replay --run runs/<timestamp>`.
 - `events.jsonl`: the ordered event stream of the run (one JSON object per line:
   `run_start`, `retrieval`, `plan`, `step_begin`, `decision`, `execute`,
   `verify`, `incident`, `done`) — the backbone for replay and diagnostics.
